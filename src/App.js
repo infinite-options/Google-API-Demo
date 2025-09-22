@@ -34,6 +34,8 @@ function App() {
   const [calendarEvents, setCalendarEvents] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [selectedPhotos, setSelectedPhotos] = useState([]);
+  const [googlePhotos, setGooglePhotos] = useState([]);
+  const [thumbnailUrls, setThumbnailUrls] = useState({});
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -66,8 +68,30 @@ function App() {
         })
         .then((data) => {
           console.log("Token response:", data);
+          console.log("Token scope:", data.scope);
+
+          // Verify which scopes are included in the token
+          const requestedScopes = [
+            "https://www.googleapis.com/auth/userinfo.profile",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/photoslibrary.readonly",
+          ];
+
+          const tokenScopes = data.scope ? data.scope.split(" ") : [];
+          console.log("=== SCOPE VERIFICATION ===");
+          requestedScopes.forEach((scope) => {
+            const isIncluded = tokenScopes.includes(scope);
+            console.log(`${scope}: ${isIncluded ? "✅ YES" : "❌ NO"}`);
+          });
+          console.log("=========================");
+
           if (data.access_token) {
             console.log("Access token received, fetching profile...");
+            console.log("Access token:", data.access_token);
+            console.log("Token type:", data.token_type);
+            console.log("Expires in:", data.expires_in, "seconds");
             setAccessToken(data.access_token);
             fetch("https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses", {
               headers: { Authorization: `Bearer ${data.access_token}` },
@@ -102,7 +126,7 @@ function App() {
     // Build Google OAuth URL
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${encodeURIComponent(
       scope
-    )}&code_challenge=${codeChallenge}&code_challenge_method=S256&access_type=offline&prompt=consent`;
+    )}&code_challenge=${codeChallenge}&code_challenge_method=S256&include_granted_scopes=true&access_type=offline&prompt=consent`;
 
     console.log("Redirecting to Google OAuth URL:", authUrl);
     window.location.href = authUrl;
@@ -153,7 +177,7 @@ function App() {
 
       // Use Google Drive API to find image files
       const response = await fetch(
-        "https://www.googleapis.com/drive/v3/files?q=mimeType contains 'image/'&pageSize=20&fields=files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,thumbnailLink)&orderBy=modifiedTime desc",
+        "https://www.googleapis.com/drive/v3/files?q=mimeType contains 'image/'&pageSize=20&fields=files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,thumbnailLink,imageMediaMetadata,webContentLink)&orderBy=modifiedTime desc",
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -173,26 +197,124 @@ function App() {
 
       // Transform the data to match the expected format
       const photos =
-        data.files?.map((file) => ({
-          id: file.id,
-          name: file.name,
-          url: file.webViewLink,
-          thumbnails: file.thumbnailLink
-            ? [
-                {
-                  url: file.thumbnailLink,
-                },
-              ]
-            : [],
-          mimeType: file.mimeType,
-          size: file.size,
-          modifiedTime: file.modifiedTime,
-        })) || [];
+        data.files?.map((file) => {
+          // Use the Drive API thumbnail endpoint with proper authentication
+          let thumbnailUrl = null;
+          if (file.id) {
+            // Use the Drive API thumbnail endpoint with the access token
+            thumbnailUrl = `https://drive.google.com/thumbnail?id=${file.id}&sz=w200-h200`;
+          }
+
+          return {
+            id: file.id,
+            name: file.name,
+            url: file.webViewLink,
+            thumbnails: thumbnailUrl
+              ? [
+                  {
+                    url: thumbnailUrl,
+                  },
+                ]
+              : [],
+            mimeType: file.mimeType,
+            size: file.size,
+            modifiedTime: file.modifiedTime,
+            imageMetadata: file.imageMediaMetadata,
+            // Add debug info
+            debug: {
+              hasThumbnailLink: !!file.thumbnailLink,
+              thumbnailLink: file.thumbnailLink,
+              generatedThumbnailUrl: thumbnailUrl,
+            },
+          };
+        }) || [];
 
       setSelectedPhotos(photos);
+
+      // For now, let's just use the webViewLink as a fallback
+      // and show a placeholder that opens the image when clicked
+      const thumbnailMap = {};
+      photos.forEach((photo) => {
+        if (photo.id) {
+          // Use a placeholder that will be handled by the UI
+          thumbnailMap[photo.id] = null;
+        }
+      });
+
+      setThumbnailUrls(thumbnailMap);
     } catch (error) {
       console.error("Error fetching photos:", error);
       alert(`Error fetching photos: ${error.message}`);
+    }
+  };
+
+  // Helper function to fetch authenticated thumbnails
+  const fetchThumbnail = async (fileId) => {
+    try {
+      const response = await fetch(`https://drive.google.com/thumbnail?id=${fileId}&sz=w200-h200`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      }
+    } catch (error) {
+      console.error("Error fetching thumbnail:", error);
+    }
+    return null;
+  };
+
+  const fetchGooglePhotos = async () => {
+    if (!accessToken) {
+      console.error("No access token available");
+      return;
+    }
+
+    try {
+      console.log("Fetching Google Photos Library...");
+
+      // Use Google Photos Library API
+      const response = await fetch("https://photoslibrary.googleapis.com/v1/mediaItems?pageSize=20", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Google Photos API error:", errorData);
+        console.error("Full error details:", JSON.stringify(errorData, null, 2));
+        throw new Error(`Google Photos API error: ${response.status} - ${errorData.error?.message || "Unknown error"}`);
+      }
+
+      const data = await response.json();
+      console.log("Google Photos data:", data);
+
+      // Transform the data to match the expected format
+      const photos =
+        data.mediaItems?.map((item) => ({
+          id: item.id,
+          name: item.filename,
+          url: item.baseUrl,
+          thumbnails: [
+            {
+              url: item.baseUrl + "=w200-h200",
+            },
+          ],
+          mimeType: item.mimeType,
+          creationTime: item.mediaMetadata?.creationTime,
+          width: item.mediaMetadata?.width,
+          height: item.mediaMetadata?.height,
+        })) || [];
+
+      setGooglePhotos(photos);
+    } catch (error) {
+      console.error("Error fetching Google Photos:", error);
+      alert(`Error fetching Google Photos: ${error.message}`);
     }
   };
 
@@ -286,21 +408,36 @@ function App() {
 
             {/* Photo Picker Section */}
             <div style={{ marginBottom: "2rem", border: "1px solid #e0e0e0", padding: "1rem", borderRadius: "8px" }}>
-              <h3 style={{ marginTop: 0, color: "#4285F4" }}>Google Drive Images</h3>
-              <p style={{ color: "#666", marginBottom: "1rem" }}>Load recent image files from your Google Drive</p>
-              <button
-                onClick={fetchPhotos}
-                style={{
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#4285F4",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                }}
-              >
-                Load Recent Images
-              </button>
+              <h3 style={{ marginTop: 0, color: "#4285F4" }}>Google Images</h3>
+              <p style={{ color: "#666", marginBottom: "1rem" }}>Load images from Google Drive or Google Photos Library</p>
+              <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                <button
+                  onClick={fetchPhotos}
+                  style={{
+                    padding: "0.5rem 1rem",
+                    backgroundColor: "#34A853",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Load Drive Images
+                </button>
+                <button
+                  onClick={fetchGooglePhotos}
+                  style={{
+                    padding: "0.5rem 1rem",
+                    backgroundColor: "#4285F4",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Load Google Photos
+                </button>
+              </div>
             </div>
 
             {driveFiles && (
@@ -420,10 +557,58 @@ function App() {
             )}
 
             {selectedPhotos && selectedPhotos.length > 0 && (
-              <div style={{ marginBottom: "2rem", border: "1px solid #4285F4", padding: "1rem", borderRadius: "8px", backgroundColor: "#f8f9ff" }}>
-                <h3 style={{ color: "#4285F4", marginTop: 0 }}>Drive Images ({selectedPhotos.length})</h3>
+              <div style={{ marginBottom: "2rem", border: "1px solid #34A853", padding: "1rem", borderRadius: "8px", backgroundColor: "#f8fff8" }}>
+                <h3 style={{ color: "#34A853", marginTop: 0 }}>Drive Images ({selectedPhotos.length})</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
                   {selectedPhotos.map((photo, index) => (
+                    <div
+                      key={index}
+                      style={{
+                        border: "1px solid #e0e0e0",
+                        borderRadius: "8px",
+                        overflow: "hidden",
+                        backgroundColor: "white",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "150px",
+                          backgroundColor: "#f0f0f0",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          position: "relative",
+                          overflow: "hidden",
+                        }}
+                        onClick={() => {
+                          // Open the image in a new tab
+                          window.open(photo.url, "_blank");
+                        }}
+                      >
+                        <div style={{ textAlign: "center", color: "#666" }}>
+                          <div style={{ fontSize: "32px", marginBottom: "8px" }}>📷</div>
+                          <div style={{ fontSize: "12px", marginBottom: "4px" }}>{photo.name}</div>
+                          <div style={{ fontSize: "10px", color: "#999" }}>Click to view</div>
+                        </div>
+                      </div>
+                      <div style={{ padding: "0.5rem" }}>
+                        <div style={{ fontSize: "11px", color: "#999" }}>{photo.mimeType && photo.mimeType.includes("image") ? "🖼️ Image" : "📄 File"}</div>
+                        {photo.size && <div style={{ fontSize: "10px", color: "#999" }}>Size: {Math.round(photo.size / 1024)} KB</div>}
+                        {photo.modifiedTime && <div style={{ fontSize: "10px", color: "#999" }}>Modified: {new Date(photo.modifiedTime).toLocaleDateString()}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {googlePhotos && googlePhotos.length > 0 && (
+              <div style={{ marginBottom: "2rem", border: "1px solid #4285F4", padding: "1rem", borderRadius: "8px", backgroundColor: "#f8f9ff" }}>
+                <h3 style={{ color: "#4285F4", marginTop: 0 }}>Google Photos Library ({googlePhotos.length})</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
+                  {googlePhotos.map((photo, index) => (
                     <div
                       key={index}
                       style={{
@@ -444,7 +629,8 @@ function App() {
                       />
                       <div style={{ padding: "0.5rem" }}>
                         <div style={{ fontSize: "12px", color: "#666", marginBottom: "0.25rem" }}>{photo.name || `Photo ${index + 1}`}</div>
-                        <div style={{ fontSize: "11px", color: "#999" }}>{photo.mimeType && photo.mimeType.includes("image") ? "🖼️ Image" : "📄 File"}</div>
+                        <div style={{ fontSize: "11px", color: "#999" }}>{photo.width && photo.height ? `📐 ${photo.width}x${photo.height}` : "🖼️ Image"}</div>
+                        {photo.creationTime && <div style={{ fontSize: "10px", color: "#999" }}>📅 {new Date(photo.creationTime).toLocaleDateString()}</div>}
                       </div>
                     </div>
                   ))}
