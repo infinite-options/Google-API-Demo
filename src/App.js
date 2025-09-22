@@ -10,7 +10,7 @@ console.log("REACT_APP_GOOGLE_CLIENT_ID_WEB:", clientId);
 console.log("REACT_APP_GOOGLE_CLIENT_SECRET_WEB:", clientSecret ? `***${clientSecret.slice(-4)}` : "undefined");
 
 const scope =
-  "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly";
+  "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photoslibrary.readonly";
 
 // Utility: base64url encode
 function base64urlencode(arrayBuffer) {
@@ -33,6 +33,7 @@ function App() {
   const [driveFiles, setDriveFiles] = useState(null);
   const [calendarEvents, setCalendarEvents] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
+  const [selectedPhotos, setSelectedPhotos] = useState([]);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -141,6 +142,60 @@ function App() {
     }
   };
 
+  const fetchPhotos = async () => {
+    if (!accessToken) {
+      console.error("No access token available");
+      return;
+    }
+
+    try {
+      console.log("Fetching Google Photos from Drive...");
+
+      // Use Google Drive API to find image files
+      const response = await fetch(
+        "https://www.googleapis.com/drive/v3/files?q=mimeType contains 'image/'&pageSize=20&fields=files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,thumbnailLink)&orderBy=modifiedTime desc",
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Drive API error:", errorData);
+        throw new Error(`Drive API error: ${response.status} - ${errorData.error?.message || "Unknown error"}`);
+      }
+
+      const data = await response.json();
+      console.log("Drive photos data:", data);
+
+      // Transform the data to match the expected format
+      const photos =
+        data.files?.map((file) => ({
+          id: file.id,
+          name: file.name,
+          url: file.webViewLink,
+          thumbnails: file.thumbnailLink
+            ? [
+                {
+                  url: file.thumbnailLink,
+                },
+              ]
+            : [],
+          mimeType: file.mimeType,
+          size: file.size,
+          modifiedTime: file.modifiedTime,
+        })) || [];
+
+      setSelectedPhotos(photos);
+    } catch (error) {
+      console.error("Error fetching photos:", error);
+      alert(`Error fetching photos: ${error.message}`);
+    }
+  };
+
   return (
     <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
       <h1>Google APIs Demo</h1>
@@ -227,6 +282,25 @@ function App() {
                   Load Calendar Events
                 </button>
               </div>
+            </div>
+
+            {/* Photo Picker Section */}
+            <div style={{ marginBottom: "2rem", border: "1px solid #e0e0e0", padding: "1rem", borderRadius: "8px" }}>
+              <h3 style={{ marginTop: 0, color: "#4285F4" }}>Google Drive Images</h3>
+              <p style={{ color: "#666", marginBottom: "1rem" }}>Load recent image files from your Google Drive</p>
+              <button
+                onClick={fetchPhotos}
+                style={{
+                  padding: "0.5rem 1rem",
+                  backgroundColor: "#4285F4",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                }}
+              >
+                Load Recent Images
+              </button>
             </div>
 
             {driveFiles && (
@@ -342,6 +416,39 @@ function App() {
                 ) : (
                   <p style={{ color: "#666" }}>No events found for this date</p>
                 )}
+              </div>
+            )}
+
+            {selectedPhotos && selectedPhotos.length > 0 && (
+              <div style={{ marginBottom: "2rem", border: "1px solid #4285F4", padding: "1rem", borderRadius: "8px", backgroundColor: "#f8f9ff" }}>
+                <h3 style={{ color: "#4285F4", marginTop: 0 }}>Drive Images ({selectedPhotos.length})</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
+                  {selectedPhotos.map((photo, index) => (
+                    <div
+                      key={index}
+                      style={{
+                        border: "1px solid #e0e0e0",
+                        borderRadius: "8px",
+                        overflow: "hidden",
+                        backgroundColor: "white",
+                      }}
+                    >
+                      <img
+                        src={photo.thumbnails?.[0]?.url || photo.url}
+                        alt={photo.name || `Photo ${index + 1}`}
+                        style={{
+                          width: "100%",
+                          height: "150px",
+                          objectFit: "cover",
+                        }}
+                      />
+                      <div style={{ padding: "0.5rem" }}>
+                        <div style={{ fontSize: "12px", color: "#666", marginBottom: "0.25rem" }}>{photo.name || `Photo ${index + 1}`}</div>
+                        <div style={{ fontSize: "11px", color: "#999" }}>{photo.mimeType && photo.mimeType.includes("image") ? "🖼️ Image" : "📄 File"}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
