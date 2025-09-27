@@ -85,6 +85,7 @@ export default function HomeScreen() {
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoItem[]>([]);
   const [googlePhotos, setGooglePhotos] = useState<PhotoItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
 
   useEffect(() => {
     // Check if we have a stored access token
@@ -129,8 +130,8 @@ export default function HomeScreen() {
     }
   };
 
-  const logout = () => {
-    GoogleApiService.clearTokens();
+  const logout = async () => {
+    await GoogleApiService.signOut();
     setProfile(null);
     setAccessToken(null);
     setDriveFiles(null);
@@ -188,17 +189,21 @@ export default function HomeScreen() {
     if (!accessToken) return;
 
     try {
-      setLoading(true);
+      setPhotoPickerLoading(true);
       const photos = await GoogleApiService.openPhotoPicker();
       console.log("Photos received from Photo Picker:", photos);
       console.log("First photo structure:", photos[0]);
       setGooglePhotos(photos);
-      Alert.alert("Success", `Loaded ${photos.length} photos from Google Photos!`);
+      if (photos.length > 0) {
+        Alert.alert("Success", `Loaded ${photos.length} photos from Google Photos!`);
+      } else {
+        Alert.alert("Info", "No photos were selected. Please try again and make sure to click 'Done' in the picker.");
+      }
     } catch (error) {
       console.error("Error opening Photo Picker:", error);
       Alert.alert("Error", "Failed to open Photo Picker");
     } finally {
-      setLoading(false);
+      setPhotoPickerLoading(false);
     }
   };
 
@@ -303,13 +308,18 @@ export default function HomeScreen() {
                 <TouchableOpacity style={styles.photoButton} onPress={fetchPhotos}>
                   <Text style={styles.photoButtonText}>Load Drive Images</Text>
                 </TouchableOpacity>
-                {Platform.OS === "web" && (
-                  <TouchableOpacity style={styles.photoButton} onPress={openPhotoPicker}>
-                    <Text style={styles.photoButtonText}>Open Photo Picker</Text>
-                  </TouchableOpacity>
-                )}
+                <TouchableOpacity style={styles.photoButton} onPress={openPhotoPicker} disabled={photoPickerLoading}>
+                  {photoPickerLoading ? <ActivityIndicator color='white' size='small' /> : <Text style={styles.photoButtonText}>Open Photo Picker</Text>}
+                </TouchableOpacity>
               </View>
-              {Platform.OS !== "web" && <ThemedText style={styles.noteText}>Note: Photo Picker is only available on web platform</ThemedText>}
+              <ThemedText style={styles.noteText}>
+                📋 How to use Photo Picker:{"\n"}
+                1. Click "Open Photo Picker" to open Google Photos in your browser{"\n"}
+                2. Select the photos you want{"\n"}
+                3. Click "Done" or "Select" in the picker{"\n"}
+                4. Close the browser tab/window{"\n"}
+                5. Photos will automatically appear below (may take a few seconds)
+              </ThemedText>
             </View>
 
             {/* Drive Files Results */}

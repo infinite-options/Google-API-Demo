@@ -62,6 +62,10 @@ class GoogleApiService {
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
 
+  constructor() {
+    // No special configuration needed for expo-auth-session
+  }
+
   // Set access token
   setAccessToken(token: string) {
     this.accessToken = token;
@@ -76,6 +80,11 @@ class GoogleApiService {
   clearTokens() {
     this.accessToken = null;
     this.refreshToken = null;
+  }
+
+  // Sign out
+  async signOut() {
+    this.clearTokens();
   }
 
   // Generate code verifier for PKCE
@@ -145,6 +154,7 @@ class GoogleApiService {
 
       console.log("Opening auth URL:", authUrl);
 
+      // Use WebBrowser for better OAuth experience
       const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
 
       if (result.type === "success" && result.url) {
@@ -152,11 +162,16 @@ class GoogleApiService {
         const code = url.searchParams.get("code");
 
         if (code) {
+          console.log("Auth code received:", code);
           return await this.exchangeCodeForToken(code, codeVerifier, clientId, redirectUri);
+        } else {
+          return { success: false, error: "No authorization code received" };
         }
+      } else if (result.type === "cancel") {
+        return { success: false, error: "Authentication cancelled by user" };
+      } else {
+        return { success: false, error: "Authentication failed" };
       }
-
-      return { success: false, error: "Authentication was cancelled or failed" };
     } catch (error) {
       console.error("Web authentication error:", error);
       return { success: false, error: error instanceof Error ? error.message : "Web authentication failed" };
@@ -442,12 +457,8 @@ class GoogleApiService {
     }
   }
 
-  // Open Photo Picker (Web only)
+  // Open Photo Picker (All platforms via web browser)
   async openPhotoPicker(): Promise<PhotoItem[]> {
-    if (Platform.OS !== "web") {
-      throw new Error("Photo Picker is only available on web platform");
-    }
-
     if (!this.accessToken) {
       throw new Error("No access token available");
     }
@@ -459,37 +470,69 @@ class GoogleApiService {
         throw new Error("Failed to get picker URI");
       }
 
-      // Open picker in new window
-      const pickerWindow = window.open(session.pickerUri, "_blank", "width=800,height=600");
+      if (Platform.OS === "web") {
+        // Open picker in new window (web)
+        const pickerWindow = window.open(session.pickerUri, "_blank", "width=800,height=600");
 
-      if (!pickerWindow) {
-        throw new Error("Failed to open picker window");
-      }
+        if (!pickerWindow) {
+          throw new Error("Failed to open picker window");
+        }
 
-      // Wait for window to close and fetch photos
-      return new Promise((resolve, reject) => {
-        const checkClosed = setInterval(async () => {
-          if (pickerWindow.closed) {
-            clearInterval(checkClosed);
+        // Use a different approach to detect completion
+        // Instead of checking window.closed, we'll poll the session status
+        return new Promise((resolve, reject) => {
+          let attempts = 0;
+          const maxAttempts = 30; // 30 seconds
 
-            // Wait for session to update
-            setTimeout(async () => {
-              try {
-                const photos = await this.fetchSelectedPhotos(session.id);
+          const checkSession = async () => {
+            try {
+              attempts++;
+              console.log(`Checking Photo Picker session status (attempt ${attempts}/${maxAttempts})`);
+
+              // Try to fetch photos to see if any were selected
+              const photos = await this.fetchSelectedPhotos(session.id);
+
+              if (photos.length > 0) {
+                console.log(`Found ${photos.length} selected photos!`);
                 resolve(photos);
-              } catch (error) {
-                reject(error);
+                return;
               }
-            }, 3000);
-          }
-        }, 1000);
 
-        // Timeout after 30 seconds
-        setTimeout(() => {
-          clearInterval(checkClosed);
-          reject(new Error("Photo picker timeout"));
-        }, 30000);
-      });
+              // If no photos yet and we haven't exceeded max attempts, try again
+              if (attempts < maxAttempts) {
+                setTimeout(checkSession, 1000);
+              } else {
+                console.log("Photo Picker timeout - no photos selected");
+                resolve([]); // Return empty array instead of rejecting
+              }
+            } catch (error) {
+              console.log("Session check error (this is normal during selection):", error);
+
+              // If we haven't exceeded max attempts, try again
+              if (attempts < maxAttempts) {
+                setTimeout(checkSession, 1000);
+              } else {
+                console.log("Photo Picker timeout - no photos selected");
+                resolve([]); // Return empty array instead of rejecting
+              }
+            }
+          };
+
+          // Start checking after a short delay
+          setTimeout(checkSession, 2000);
+        });
+      } else {
+        // For mobile platforms, open in external browser
+        const result = await WebBrowser.openBrowserAsync(session.pickerUri);
+
+        if (result.type === "dismiss") {
+          // User closed the browser, wait a bit and fetch photos
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          return await this.fetchSelectedPhotos(session.id);
+        } else {
+          throw new Error("Photo picker was cancelled");
+        }
+      }
     } catch (error) {
       console.error("Error opening Photo Picker:", error);
       throw error;
