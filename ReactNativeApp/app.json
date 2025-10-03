@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Google API Demo RN",
+    "slug": "google-api-demo-rn",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourcompany.googleapidemorn"
+    },
+    "android": {
+      "package": "com.yourcompany.googleapidemorn"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "scheme": "googleapidemorn"
+  }
+}

@@ -8,6 +8,7 @@ const redirectUri = "http://localhost:3000"; // MUST match dev server
 console.log("Environment variables loaded:");
 console.log("REACT_APP_GOOGLE_CLIENT_ID_WEB:", clientId);
 console.log("REACT_APP_GOOGLE_CLIENT_SECRET_WEB:", clientSecret ? `***${clientSecret.slice(-4)}` : "undefined");
+console.log("Note: Google requires client_secret even with PKCE (non-standard behavior)");
 
 const scope =
   "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photoslibrary.readonly https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
@@ -53,6 +54,7 @@ function App() {
       body.append("redirect_uri", redirectUri);
       body.append("code_verifier", codeVerifier);
       body.append("client_secret", clientSecret);
+      // Note: Google requires client_secret even with PKCE (non-standard OAuth 2.0 behavior)
 
       console.log("Exchanging code for token with body:", Object.fromEntries(body));
 
