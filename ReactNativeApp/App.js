@@ -1,13 +1,32 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, Dimensions, SafeAreaView } from "react-native";
-import { WebView } from "react-native-webview";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, Dimensions, SafeAreaView, Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
 import * as Crypto from "expo-crypto";
 import axios from "axios";
 
 // Configuration
-const API_BASE_URL = "http://localhost:3001"; // Backend URL
+let API_BASE_URL = "";
+
+// Platform-specific API URL configuration
+if (__DEV__) {
+  if (Platform.OS === "ios") {
+    API_BASE_URL = "http://localhost:3001"; // iOS simulator maps localhost → your machine
+  } else if (Platform.OS === "android") {
+    API_BASE_URL = "http://10.0.2.2:3001"; // Android emulator special alias
+  } else if (Platform.OS === "web") {
+    API_BASE_URL = "http://localhost:3001"; // Web platform uses localhost
+  } else {
+    // For physical devices, use your machine's LAN IP
+    API_BASE_URL = "http://192.168.1.100:3001"; // Replace with your actual LAN IP
+  }
+} else {
+  // For production (point to deployed backend)
+  API_BASE_URL = "https://your-production-api.com";
+}
+
+console.log(`Platform: ${Platform.OS}, API_BASE_URL: ${API_BASE_URL}`);
+
 const { width } = Dimensions.get("window");
 const PHOTO_SIZE = (width - 60) / 3;
 
@@ -21,9 +40,9 @@ export default function App() {
   const [selectedPhotos, setSelectedPhotos] = useState([]);
   const [googlePhotos, setGooglePhotos] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [showPhotoPicker, setShowPhotoPicker] = useState(false);
-  const [photoPickerUrl, setPhotoPickerUrl] = useState(null);
   const [photoPickerSessionId, setPhotoPickerSessionId] = useState(null);
+  const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
+  const [imageErrors, setImageErrors] = useState({});
 
   useEffect(() => {
     // Check if we have stored credentials
@@ -35,7 +54,74 @@ export default function App() {
       setUserId(storedUserId);
       fetchProfile();
     }
+
+    // Handle OAuth callback for web platform
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get("code");
+      const state = urlParams.get("state");
+
+      if (code && state) {
+        const storedSessionId = window.sessionStorage.getItem("oauth_session_id");
+
+        if (storedSessionId === state) {
+          // Process OAuth callback
+          handleOAuthCallback(code, state);
+        } else {
+          console.error("Invalid state parameter");
+          Alert.alert("Error", "Invalid OAuth state");
+        }
+      }
+    }
   }, []);
+
+  const handleOAuthCallback = async (code, state) => {
+    try {
+      setLoading(true);
+      console.log("Processing OAuth callback...");
+
+      // Exchange code for token
+      const tokenData = await apiCall("/api/oauth/token", {
+        method: "POST",
+        data: { code, state, userId: crypto.randomUUID() },
+      });
+
+      console.log("Token exchange successful:", tokenData);
+
+      setAccessToken(tokenData.access_token);
+      setUserId(tokenData.user_id);
+
+      // Wait a moment for state to update, then fetch profile
+      setTimeout(async () => {
+        try {
+          console.log("Fetching profile with token:", tokenData.access_token);
+
+          // Fetch profile directly with the token
+          const profileData = await apiCall(`/api/user/profile?user_id=${tokenData.user_id}`, {
+            headers: {
+              Authorization: `Bearer ${tokenData.access_token}`,
+            },
+          });
+
+          setProfile(profileData);
+
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+          window.sessionStorage.removeItem("oauth_session_id");
+
+          Alert.alert("Success", "Successfully signed in with Google!");
+        } catch (profileError) {
+          console.error("Profile fetch error:", profileError);
+          Alert.alert("Error", "Profile fetch failed");
+        }
+      }, 100);
+    } catch (error) {
+      console.error("OAuth callback error:", error);
+      Alert.alert("Error", "Authentication failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // API helper function
   const apiCall = async (endpoint, options = {}) => {
@@ -50,12 +136,29 @@ export default function App() {
       },
     };
 
+    // Add body for POST/PUT requests
+    if (options.data && (options.method === "POST" || options.method === "PUT")) {
+      config.body = JSON.stringify(options.data);
+    }
+
     try {
-      const response = await axios(url, config);
-      return response.data;
+      console.log(`Making API call to: ${url}`, config);
+      const response = await fetch(url, config);
+
+      console.log(`Response status: ${response.status}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API Error ${response.status}:`, errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log(`API Success:`, data);
+      return data;
     } catch (error) {
-      console.error("API Error:", error.response?.data || error.message);
-      throw new Error(error.response?.data?.error || error.message);
+      console.error("API Error:", error.message);
+      throw new Error(error.message);
     }
   };
 
@@ -66,7 +169,19 @@ export default function App() {
       // Get OAuth URL from backend
       const { authUrl, sessionId } = await apiCall("/api/oauth/url");
 
-      // Open OAuth in browser
+      // For web platform, use direct window redirect
+      if (Platform.OS === "web") {
+        // Store session ID for later verification
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("oauth_session_id", sessionId);
+        }
+
+        // Redirect to Google OAuth
+        window.location.href = authUrl;
+        return;
+      }
+
+      // For mobile platforms, use WebBrowser
       const result = await WebBrowser.openAuthSessionAsync(authUrl, "http://localhost:8081");
 
       if (result.type === "success" && result.url) {
@@ -181,38 +296,65 @@ export default function App() {
 
   const openPhotoPicker = async () => {
     try {
-      setLoading(true);
+      setPhotoPickerLoading(true);
 
       // Get Photo Picker URL from backend
       const { pickerUrl, sessionId } = await apiCall(`/api/photos/picker/url?user_id=${userId}`);
+      console.log("Photo Picker response:", { pickerUrl, sessionId });
 
-      setPhotoPickerUrl(pickerUrl);
+      // Store session ID for later use
       setPhotoPickerSessionId(sessionId);
-      setShowPhotoPicker(true);
+
+      // Open picker in new window
+      const pickerWindow = window.open(pickerUrl, "photoPicker", "width=800,height=600,scrollbars=yes,resizable=yes,status=yes,toolbar=no,menubar=no,location=no");
+
+      if (!pickerWindow) {
+        throw new Error("Popup blocked. Please allow popups for this site.");
+      }
+
+      // Focus the window
+      pickerWindow.focus();
+
+      // Show instructions after opening
+      Alert.alert("Photo Picker Opened", "Select your photos in the picker window, then click 'Fetch Selected Photos' to load them into the app.", [
+        {
+          text: "OK",
+          onPress: () => console.log("User acknowledged picker instructions"),
+        },
+      ]);
     } catch (error) {
       console.error("Error opening Photo Picker:", error);
       Alert.alert("Error", "Failed to open Photo Picker");
     } finally {
-      setLoading(false);
+      setPhotoPickerLoading(false);
     }
   };
 
   const fetchSelectedPhotos = async () => {
-    if (!photoPickerSessionId) return;
+    if (!photoPickerSessionId) {
+      Alert.alert("No Session", "Please open the Photo Picker first.");
+      return;
+    }
 
     try {
+      setLoading(true);
       const data = await apiCall(`/api/photos/picker/media?sessionId=${photoPickerSessionId}&user_id=${userId}`);
-      setGooglePhotos(data.photos);
-      setShowPhotoPicker(false);
 
-      if (data.photos.length > 0) {
+      if (data.photos && data.photos.length > 0) {
+        setGooglePhotos(data.photos);
         Alert.alert("Success", `Loaded ${data.photos.length} photos from Google Photos!`);
       } else {
-        Alert.alert("Info", "No photos were selected");
+        Alert.alert("No Photos", "No photos were selected. Please try selecting photos in the picker first.");
       }
     } catch (error) {
       console.error("Error fetching selected photos:", error);
-      Alert.alert("Error", "Failed to fetch selected photos");
+      if (error.message.includes("user has not picked media items")) {
+        Alert.alert("No Photos Selected", "Please select photos in the Photo Picker first, then click 'Fetch Selected Photos'.");
+      } else {
+        Alert.alert("Error", "Failed to fetch selected photos. Please try again.");
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -250,30 +392,6 @@ export default function App() {
         <ActivityIndicator size='large' color='#4285F4' />
         <Text style={styles.loadingText}>Loading...</Text>
       </SafeAreaView>
-    );
-  }
-
-  if (showPhotoPicker && photoPickerUrl) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={() => setShowPhotoPicker(false)}>
-            <Text style={styles.closeButtonText}>✕ Close</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Google Photo Picker</Text>
-          <TouchableOpacity style={styles.doneButton} onPress={fetchSelectedPhotos}>
-            <Text style={styles.doneButtonText}>Done</Text>
-          </TouchableOpacity>
-        </View>
-        <WebView
-          source={{ uri: photoPickerUrl }}
-          style={styles.webview}
-          onNavigationStateChange={(navState) => {
-            // You can add logic here to detect when user is done selecting
-            console.log("Navigation state changed:", navState.url);
-          }}
-        />
-      </View>
     );
   }
 
@@ -339,9 +457,14 @@ export default function App() {
                 <TouchableOpacity style={styles.photoButton} onPress={fetchPhotos}>
                   <Text style={styles.photoButtonText}>Load Drive Images</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.photoButton} onPress={openPhotoPicker}>
-                  <Text style={styles.photoButtonText}>Open Photo Picker</Text>
+                <TouchableOpacity style={[styles.photoButton, photoPickerLoading && styles.disabledButton]} onPress={openPhotoPicker} disabled={photoPickerLoading}>
+                  <Text style={styles.photoButtonText}>{photoPickerLoading ? "Opening Picker..." : "Open Photo Picker"}</Text>
                 </TouchableOpacity>
+                {photoPickerSessionId && (
+                  <TouchableOpacity style={styles.photoButton} onPress={fetchSelectedPhotos}>
+                    <Text style={styles.photoButtonText}>Fetch Selected Photos</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
 
@@ -425,11 +548,32 @@ export default function App() {
                 <View style={styles.photosGrid}>
                   {googlePhotos.map((photo, index) => (
                     <View key={index} style={styles.photoItem}>
-                      {photo.thumbnails?.[0]?.url ? (
-                        <Image source={{ uri: photo.thumbnails[0].url }} style={styles.photoImage} resizeMode='cover' />
+                      {photo.thumbnails?.[0]?.url && !imageErrors[photo.id] ? (
+                        <Image
+                          source={{ uri: photo.thumbnails[0].url }}
+                          style={styles.photoImage}
+                          resizeMode='cover'
+                          onLoad={() => console.log("Thumbnail loaded successfully:", photo.name)}
+                          onError={(error) => {
+                            console.log("Thumbnail load error, trying full image:", photo.name, error.nativeEvent);
+                            setImageErrors((prev) => ({ ...prev, [photo.id]: "thumbnail_failed" }));
+                          }}
+                        />
+                      ) : photo.url && imageErrors[photo.id] === "thumbnail_failed" ? (
+                        <Image
+                          source={{ uri: photo.url }}
+                          style={styles.photoImage}
+                          resizeMode='cover'
+                          onLoad={() => console.log("Full image loaded successfully:", photo.name)}
+                          onError={(error) => {
+                            console.log("Full image also failed:", photo.name, error.nativeEvent);
+                            setImageErrors((prev) => ({ ...prev, [photo.id]: "both_failed" }));
+                          }}
+                        />
                       ) : (
                         <View style={styles.photoPlaceholder}>
                           <Text style={styles.photoIcon}>📷</Text>
+                          <Text style={styles.photoErrorText}>{imageErrors[photo.id] === "both_failed" ? "Image unavailable" : "Loading..."}</Text>
                         </View>
                       )}
                       <View style={styles.photoInfo}>
@@ -589,6 +733,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  disabledButton: {
+    backgroundColor: "#ccc",
+    opacity: 0.6,
+  },
   resultsCard: {
     backgroundColor: "#f8f9fa",
     padding: 16,
@@ -712,6 +860,11 @@ const styles = StyleSheet.create({
   photoIcon: {
     fontSize: 24,
     marginBottom: 4,
+  },
+  photoErrorText: {
+    fontSize: 10,
+    color: "#666",
+    textAlign: "center",
   },
   photoImage: {
     width: "100%",
