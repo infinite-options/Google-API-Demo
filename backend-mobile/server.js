@@ -9,8 +9,20 @@ require("dotenv").config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet());
+// Security middleware with CORS-friendly configuration
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:", "http:"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
+    },
+  })
+);
 
 // Rate limiting
 const limiter = rateLimit({
@@ -26,13 +38,16 @@ app.use(
     origin: [
       "http://localhost:3000", // Web development
       "http://localhost:8081", // Expo web
+      "http://127.0.0.1:8081", // Expo web (alternative)
+      "http://10.0.2.2:8081", // Android emulator
       "exp://localhost:19000", // Expo development
       "exp://192.168.1.100:19000", // Expo on local network
+      "exp://10.0.2.2:19000", // Android emulator Expo
       // Add your production domains here
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-User-ID"],
   })
 );
 
@@ -449,17 +464,23 @@ app.get("/api/photos/picker/media", async (req, res) => {
       },
     });
 
-    // Transform the data for mobile
+    // Transform the data for mobile with proxied URLs
     const photos = [];
     for (const item of response.data.mediaItems || []) {
       const baseUrl = item.mediaFile?.baseUrl;
       if (baseUrl) {
         const thumbnailUrl = baseUrl + "=w200-h200";
+        const fullImageUrl = baseUrl + "=w800-h800";
+
+        // Create proxied URLs that go through our backend
+        const proxiedThumbnailUrl = `${req.protocol}://${req.get("host")}/api/photos/proxy?url=${encodeURIComponent(thumbnailUrl)}&user_id=${user_id}`;
+        const proxiedFullUrl = `${req.protocol}://${req.get("host")}/api/photos/proxy?url=${encodeURIComponent(fullImageUrl)}&user_id=${user_id}`;
+
         photos.push({
           id: item.id,
           name: item.mediaFile?.filename || `Photo ${item.id}`,
-          url: baseUrl,
-          thumbnails: [{ url: thumbnailUrl }],
+          url: proxiedFullUrl,
+          thumbnails: [{ url: proxiedThumbnailUrl }],
           mimeType: item.mediaFile?.mimeType,
           creationTime: item.createTime,
           width: item.mediaFileMetadata?.width,
@@ -477,6 +498,67 @@ app.get("/api/photos/picker/media", async (req, res) => {
     console.error("Photo Picker media fetch error:", error.response?.data || error.message);
     res.status(500).json({
       error: "Failed to fetch selected photos",
+      details: error.response?.data?.error?.message || error.message,
+    });
+  }
+});
+
+// 7. Proxy Google Photos images with authentication
+app.options("/api/photos/proxy", (req, res) => {
+  res.set({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-ID",
+  });
+  res.status(200).end();
+});
+
+app.get("/api/photos/proxy", async (req, res) => {
+  try {
+    const { url, user_id } = req.query;
+    if (!url) {
+      return res.status(400).json({ error: "URL is required" });
+    }
+
+    const authHeader = req.headers.authorization;
+
+    let accessToken;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      accessToken = authHeader.split(" ")[1];
+    } else if (user_id) {
+      const userToken = userTokens.get(user_id);
+      if (!userToken || Date.now() > userToken.expires_at) {
+        return res.status(401).json({ error: "Token expired or invalid" });
+      }
+      accessToken = userToken.access_token;
+    } else {
+      return res.status(401).json({ error: "Missing authorization" });
+    }
+
+    // Fetch the image with authentication
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      responseType: "stream",
+    });
+
+    // Set appropriate headers with CORS
+    res.set({
+      "Content-Type": response.headers["content-type"],
+      "Content-Length": response.headers["content-length"],
+      "Cache-Control": "public, max-age=3600",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-ID",
+    });
+
+    // Pipe the image data to the response
+    response.data.pipe(res);
+  } catch (error) {
+    console.error("Image proxy error:", error.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to fetch image",
       details: error.response?.data?.error?.message || error.message,
     });
   }
