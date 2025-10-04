@@ -8,21 +8,25 @@ import axios from "axios";
 // Configuration
 let API_BASE_URL = "";
 
+// API Endpoints
+const LOCAL_API_URL = Platform.OS === "android" ? "http://10.0.2.2:4030" : "http://localhost:4030";
+const LIVE_API_URL = "https://bmarz6chil.execute-api.us-west-1.amazonaws.com/dev";
+
 // Platform-specific API URL configuration
 if (__DEV__) {
-  if (Platform.OS === "ios") {
-    API_BASE_URL = "http://localhost:3001"; // iOS simulator maps localhost → your machine
-  } else if (Platform.OS === "android") {
-    API_BASE_URL = "http://10.0.2.2:3001"; // Android emulator special alias
-  } else if (Platform.OS === "web") {
-    API_BASE_URL = "http://localhost:3001"; // Web platform uses localhost
-  } else {
+if (Platform.OS === "ios") {
+  API_BASE_URL = LOCAL_API_URL; // iOS simulator maps localhost → your machine
+} else if (Platform.OS === "android") {
+  API_BASE_URL = LOCAL_API_URL; // Android emulator special alias
+} else if (Platform.OS === "web") {
+  API_BASE_URL = LOCAL_API_URL; // Web platform uses localhost
+} else {
     // For physical devices, use your machine's LAN IP
-    API_BASE_URL = "http://192.168.1.100:3001"; // Replace with your actual LAN IP
+    API_BASE_URL = "http://192.168.1.100:4030"; // Replace with your actual LAN IP
   }
 } else {
   // For production (point to deployed backend)
-  API_BASE_URL = "https://your-production-api.com";
+  API_BASE_URL = LIVE_API_URL;
 }
 
 console.log(`Platform: ${Platform.OS}, API_BASE_URL: ${API_BASE_URL}`);
@@ -44,6 +48,9 @@ export default function App() {
   const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState({});
   const [oauthSessionId, setOauthSessionId] = useState(null);
+  const [apiResponse, setApiResponse] = useState(null);
+  const [apiError, setApiError] = useState(null);
+  const [currentApiUrl, setCurrentApiUrl] = useState(null);
 
   useEffect(() => {
     // Deep linking setup for OAuth callback
@@ -51,13 +58,21 @@ export default function App() {
       const { url } = event;
       console.log('🔗 Deep link URL:', url);
       
-      // Expect url like: capshnz://photos/done?session=xyz
+      // Expect url like: googleapidemo://photos/selection?sessionId=xyz
       try {
         const parsed = new URL(url);
-        if (parsed.protocol === 'capshnz:' && parsed.host === 'photos') {
+        if (parsed.protocol === 'googleapidemo:' && parsed.host === 'photos') {
+          const sessionId = parsed.searchParams.get('sessionId');
+          if (sessionId) {
+            console.log('📸 Photo picker completed, fetching results for sessionId:', sessionId);
+            fetchPickerResult(sessionId);
+          }
+        }
+        // Also support legacy capshnz:// format
+        else if (parsed.protocol === 'capshnz:' && parsed.host === 'photos') {
           const session = parsed.searchParams.get('session');
           if (session) {
-            console.log('📸 Photo picker completed, fetching results for session:', session);
+            console.log('📸 Photo picker completed (legacy), fetching results for session:', session);
             fetchPickerResult(session);
           }
         }
@@ -151,9 +166,13 @@ export default function App() {
     try {
       setLoading(true);
       console.log("Processing OAuth callback...");
+      console.log("Using API URL:", currentApiUrl);
 
+      // Use the correct API URL based on which button was pressed
+      const apiUrl = currentApiUrl || API_BASE_URL;
+      
       // Exchange code for token
-      const tokenData = await apiCall("/api/oauth/token", {
+      const tokenData = await apiCallWithUrl(apiUrl, "/api/oauth/token", {
         method: "POST",
         data: { code, state, userId: crypto.randomUUID() },
       });
@@ -169,7 +188,7 @@ export default function App() {
           console.log("Fetching profile with token:", tokenData.access_token);
 
           // Fetch profile directly with the token
-          const profileData = await apiCall(`/api/user/profile?user_id=${tokenData.user_id}`, {
+          const profileData = await apiCallWithUrl(apiUrl, `/api/user/profile?user_id=${tokenData.user_id}`, {
             headers: {
               Authorization: `Bearer ${tokenData.access_token}`,
             },
@@ -234,14 +253,56 @@ export default function App() {
     }
   };
 
-  const login = async () => {
+  const apiCallWithUrl = async (baseUrl, endpoint, options = {}) => {
+    const url = `${baseUrl}${endpoint}`;
+    const config = {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+        ...(userId && { "X-User-ID": userId }),
+        ...options.headers,
+      },
+    };
+
+    // Add body for POST/PUT requests
+    if (options.data && (options.method === "POST" || options.method === "PUT")) {
+      config.body = JSON.stringify(options.data);
+    }
+
+    try {
+      console.log(`Making API call to: ${url}`, config);
+      const response = await fetch(url, config);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`Response status: ${response.status}`);
+      console.log("API Success:", data);
+      return data;
+    } catch (error) {
+      console.error("API Error:", error.message);
+      throw new Error(error.message);
+    }
+  };
+
+  const loginLocal = async () => {
     try {
       setLoading(true);
-      console.log("🔐 Starting OAuth flow...");
+      setApiError(null);
+      setApiResponse(null);
+      setCurrentApiUrl(LOCAL_API_URL);
+      console.log("🔐 Starting LOCAL OAuth flow...");
 
-      // Get OAuth URL from backend
-      const { authUrl, sessionId } = await apiCall("/api/oauth/url");
-      console.log("🔗 OAuth URL received, sessionId:", sessionId);
+      // Get OAuth URL from local backend
+      const response = await apiCallWithUrl(LOCAL_API_URL, "/api/oauth/url");
+      console.log("🔗 LOCAL OAuth URL received:", JSON.stringify(response, null, 2));
+      
+      setApiResponse(response);
+      
+      const { authUrl, sessionId } = response;
       
       // Store session ID for later use
       setOauthSessionId(sessionId);
@@ -259,21 +320,117 @@ export default function App() {
       }
 
       // For mobile platforms, open in external browser
-      console.log("🌐 Opening OAuth URL in external browser...");
+      console.log("🌐 Opening LOCAL OAuth URL in external browser...");
       const supported = await Linking.canOpenURL(authUrl);
       
       if (supported) {
         await Linking.openURL(authUrl);
         Alert.alert(
-          "OAuth Started", 
+          "Local OAuth Started", 
           "Please complete the authentication in your browser, then return to this app."
         );
       } else {
         Alert.alert("Error", "Cannot open OAuth URL");
       }
     } catch (error) {
-      console.error("Login error:", error);
-      Alert.alert("Error", "Login failed");
+      console.error("Local login error:", error);
+      setApiError(error.message);
+      Alert.alert("Error", `Local login failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loginLive = async () => {
+    try {
+      setLoading(true);
+      setApiError(null);
+      setApiResponse(null);
+      setCurrentApiUrl(LIVE_API_URL);
+      console.log("🔐 Starting LIVE OAuth flow...");
+
+      // Get OAuth URL from live backend
+      const response = await apiCallWithUrl(LIVE_API_URL, "/api/oauth/url");
+      console.log("🔗 LIVE OAuth URL received:", JSON.stringify(response, null, 2));
+      
+      setApiResponse(response);
+      
+      const { authUrl, sessionId } = response;
+      
+      // Store session ID for later use
+      setOauthSessionId(sessionId);
+
+      // For web platform, use direct window redirect
+      if (Platform.OS === "web") {
+        // Store session ID for later verification
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("oauth_session_id", sessionId);
+        }
+
+        // Redirect to Google OAuth
+        window.location.href = authUrl;
+        return;
+      }
+
+      // For mobile platforms, open in external browser
+      console.log("🌐 Opening LIVE OAuth URL in external browser...");
+      const supported = await Linking.canOpenURL(authUrl);
+      
+      if (supported) {
+        await Linking.openURL(authUrl);
+        Alert.alert(
+          "Live OAuth Started", 
+          "Please complete the authentication in your browser, then return to this app."
+        );
+      } else {
+        Alert.alert("Error", "Cannot open OAuth URL");
+      }
+    } catch (error) {
+      console.error("Live login error:", error);
+      setApiError(error.message);
+      Alert.alert("Error", `Live login failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // New function for your desired flow: Photo Picker Flow
+  const startPhotoPickerFlow = async () => {
+    try {
+      setLoading(true);
+      setApiError(null);
+      setApiResponse(null);
+      setCurrentApiUrl(LIVE_API_URL);
+      console.log("📸 Starting Photo Picker Flow...");
+
+      // Get OAuth URL from backend with Web Client ID and Backend Callback
+      const response = await apiCallWithUrl(LIVE_API_URL, "/api/oauth/url");
+      console.log("🔗 Photo Picker OAuth URL received:", JSON.stringify(response, null, 2));
+      
+      setApiResponse(response);
+      
+      const { authUrl, sessionId } = response;
+      
+      // Store session ID for later use
+      setOauthSessionId(sessionId);
+
+      // Open OAuth URL in browser
+      console.log("🌐 Opening OAuth URL in browser...");
+      const supported = await Linking.canOpenURL(authUrl);
+      
+      if (supported) {
+        await Linking.openURL(authUrl);
+        Alert.alert(
+          "Photo Picker Flow Started", 
+          "Please complete authentication in your browser. You'll be redirected to the photo picker, then back to this app."
+        );
+      } else {
+        Alert.alert("Error", "Cannot open OAuth URL");
+      }
+    } catch (error) {
+      console.error("Photo Picker Flow error:", error);
+      setApiError(error.message);
+      Alert.alert("Error", `Photo Picker Flow failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -454,9 +611,68 @@ export default function App() {
         </View>
 
         {!profile ? (
-          <TouchableOpacity style={styles.loginButton} onPress={login}>
-            <Text style={styles.loginButtonText}>Sign in with Google</Text>
-          </TouchableOpacity>
+          <View>
+            {/* Local Host Button */}
+            <TouchableOpacity 
+              style={[styles.loginButton, { backgroundColor: "#007bff", marginBottom: 8 }]} 
+              onPress={loginLocal} 
+              disabled={loading}
+            >
+              <Text style={styles.loginButtonText}>
+                {loading ? "Signing in..." : "Sign In Local Host"}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Live Server Button */}
+            <TouchableOpacity 
+              style={[styles.loginButton, { backgroundColor: "#28a745" }]} 
+              onPress={loginLive} 
+              disabled={loading}
+            >
+              <Text style={styles.loginButtonText}>
+                {loading ? "Signing in..." : "Sign In Live Server"}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Photo Picker Flow Button (Your Desired Flow) */}
+            <TouchableOpacity 
+              style={[styles.loginButton, { backgroundColor: "#6f42c1" }]} 
+              onPress={startPhotoPickerFlow} 
+              disabled={loading}
+            >
+              <Text style={styles.loginButtonText}>
+                {loading ? "Starting..." : "Photo Picker Flow"}
+              </Text>
+            </TouchableOpacity>
+
+            {/* API Response Display */}
+            {apiResponse && (
+              <View style={styles.responseContainer}>
+                <Text style={styles.responseTitle}>📡 API Response:</Text>
+                <ScrollView style={styles.responseScrollView}>
+                  <Text style={styles.responseText}>
+                    {JSON.stringify(apiResponse, null, 2)}
+                  </Text>
+                </ScrollView>
+              </View>
+            )}
+
+            {/* API Error Display */}
+            {apiError && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorTitle}>❌ API Error:</Text>
+                <Text style={styles.errorText}>{apiError}</Text>
+              </View>
+            )}
+
+            {/* Debug Info */}
+            <View style={styles.debugContainer}>
+              <Text style={styles.debugTitle}>🔍 Debug Info:</Text>
+              <Text style={styles.debugText}>Current API URL: {currentApiUrl || 'None'}</Text>
+              <Text style={styles.debugText}>OAuth Session ID: {oauthSessionId || 'None'}</Text>
+              <Text style={styles.debugText}>Access Token: {accessToken ? 'Present' : 'None'}</Text>
+            </View>
+          </View>
         ) : (
           <View>
             {/* Profile Section */}
@@ -953,6 +1169,66 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     marginTop: 8,
     textAlign: "center",
+  },
+  responseContainer: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: "#f8f9fa",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+  },
+  responseTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#495057",
+    marginBottom: 8,
+  },
+  responseScrollView: {
+    maxHeight: 150,
+  },
+  responseText: {
+    fontSize: 10,
+    fontFamily: "monospace",
+    color: "#495057",
+    lineHeight: 14,
+  },
+  errorContainer: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: "#f8d7da",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#f5c6cb",
+  },
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#721c24",
+    marginBottom: 8,
+  },
+  errorText: {
+    fontSize: 12,
+    color: "#721c24",
+  },
+  debugContainer: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: "#e7f3ff",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#b3d9ff",
+  },
+  debugTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#0066cc",
+    marginBottom: 8,
+  },
+  debugText: {
+    fontSize: 12,
+    color: "#0066cc",
+    marginBottom: 4,
   },
   // Photo Picker WebView styles
   header: {
