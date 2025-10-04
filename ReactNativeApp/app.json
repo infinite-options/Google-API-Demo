@@ -1,21 +1,33 @@
 {
   "expo": {
-    "name": "Google API Demo RN",
-    "slug": "google-api-demo-rn",
+    "name": "Google API Demo",
+    "slug": "google-api-demo",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": ["**/*"],
+    "scheme": "googleapidemo",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourcompany.googleapidemorn"
+      "bundleIdentifier": "com.infiniteoptions.GoogleLoginDemo"
     },
     "android": {
-      "package": "com.yourcompany.googleapidemorn"
+      "package": "com.infiniteoptions.GoogleLoginDemo",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "googleapidemo"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "bundler": "metro"
-    },
-    "scheme": "googleapidemorn"
+    }
   }
 }
+

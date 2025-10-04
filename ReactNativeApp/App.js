@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, Dimensions, SafeAreaView, Platform } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, Dimensions, SafeAreaView, Platform, Linking } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
 import * as Crypto from "expo-crypto";
@@ -43,8 +43,40 @@ export default function App() {
   const [photoPickerSessionId, setPhotoPickerSessionId] = useState(null);
   const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState({});
+  const [oauthSessionId, setOauthSessionId] = useState(null);
 
   useEffect(() => {
+    // Deep linking setup for OAuth callback
+    const handleUrl = (event) => {
+      const { url } = event;
+      console.log('🔗 Deep link URL:', url);
+      
+      // Expect url like: capshnz://photos/done?session=xyz
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === 'capshnz:' && parsed.host === 'photos') {
+          const session = parsed.searchParams.get('session');
+          if (session) {
+            console.log('📸 Photo picker completed, fetching results for session:', session);
+            fetchPickerResult(session);
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing deep link URL:', error);
+      }
+    };
+
+    // Listen for deep links
+    const linkingListener = Linking.addEventListener('url', handleUrl);
+
+    // Check initial URL if app was launched via link
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        console.log('🔗 Initial deep link URL:', url);
+        handleUrl({ url });
+      }
+    });
+
     // Check if we have stored credentials
     const storedToken = null; // In production, use SecureStore
     const storedUserId = null; // In production, use SecureStore
@@ -73,7 +105,47 @@ export default function App() {
         }
       }
     }
+
+    // Cleanup deep linking listener
+    return () => {
+      if (linkingListener) {
+        linkingListener.remove();
+      }
+    };
   }, []);
+
+  // Fetch picker results from backend
+  const fetchPickerResult = async (session) => {
+    try {
+      console.log('📸 Fetching picker result for session:', session);
+      const response = await apiCall(`/api/picker/result?session=${encodeURIComponent(session)}`);
+      
+      if (response.success && response.selection) {
+        console.log('✅ Photo picker results received:', response.selection.length, 'photos');
+        setGooglePhotos(response.selection);
+        Alert.alert("Success", `Selected ${response.selection.length} photos from Google Photos!`);
+      } else {
+        console.log('❌ No selection found for session:', session);
+        Alert.alert("No Photos", "No photos were selected in the picker");
+      }
+    } catch (error) {
+      console.error('❌ Failed to fetch picker result:', error);
+      Alert.alert("Error", "Failed to fetch selected photos");
+    }
+  };
+
+  // Test OAuth callback function
+  const testOAuthCallback = async () => {
+    try {
+      console.log('🧪 Testing OAuth callback with test parameters...');
+      const response = await apiCall('/test-oauth-callback?code=test&state=test');
+      console.log('🧪 Test response:', JSON.stringify(response, null, 2));
+      Alert.alert("Test Result", `Test completed. Check console for details.`);
+    } catch (error) {
+      console.error('🧪 Test error:', error);
+      Alert.alert("Test Error", `Test failed: ${error.message}`);
+    }
+  };
 
   const handleOAuthCallback = async (code, state) => {
     try {
@@ -165,9 +237,14 @@ export default function App() {
   const login = async () => {
     try {
       setLoading(true);
+      console.log("🔐 Starting OAuth flow...");
 
       // Get OAuth URL from backend
       const { authUrl, sessionId } = await apiCall("/api/oauth/url");
+      console.log("🔗 OAuth URL received, sessionId:", sessionId);
+      
+      // Store session ID for later use
+      setOauthSessionId(sessionId);
 
       // For web platform, use direct window redirect
       if (Platform.OS === "web") {
@@ -181,44 +258,18 @@ export default function App() {
         return;
       }
 
-      // For mobile platforms, use WebBrowser
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, "http://localhost:8081");
-
-      if (result.type === "success" && result.url) {
-        console.log("OAuth success, processing URL:", result.url);
-        const url = new URL(result.url);
-        const code = url.searchParams.get("code");
-        const state = url.searchParams.get("state");
-
-        if (code && state) {
-          console.log("Code and state found, exchanging for token...");
-          // Exchange code for token
-          const tokenData = await apiCall("/api/oauth/token", {
-            method: "POST",
-            data: { code, state, userId: crypto.randomUUID() },
-          });
-
-          setAccessToken(tokenData.access_token);
-          setUserId(tokenData.user_id);
-
-          // Store credentials (in production, use SecureStore)
-          // await SecureStore.setItemAsync('access_token', tokenData.access_token);
-          // await SecureStore.setItemAsync('user_id', tokenData.user_id);
-
-          // Fetch profile
-          await fetchProfile();
-
-          Alert.alert("Success", "Successfully signed in with Google!");
-        } else {
-          console.log("No code or state found in URL");
-          Alert.alert("Error", "OAuth callback missing required parameters");
-        }
-      } else if (result.type === "cancel") {
-        console.log("OAuth cancelled by user");
-        Alert.alert("Cancelled", "Sign in was cancelled");
+      // For mobile platforms, open in external browser
+      console.log("🌐 Opening OAuth URL in external browser...");
+      const supported = await Linking.canOpenURL(authUrl);
+      
+      if (supported) {
+        await Linking.openURL(authUrl);
+        Alert.alert(
+          "OAuth Started", 
+          "Please complete the authentication in your browser, then return to this app."
+        );
       } else {
-        console.log("OAuth failed:", result);
-        Alert.alert("Error", "Sign in failed");
+        Alert.alert("Error", "Cannot open OAuth URL");
       }
     } catch (error) {
       console.error("Login error:", error);
@@ -294,37 +345,33 @@ export default function App() {
     }
   };
 
-  const openPhotoPicker = async () => {
+  const startGooglePicker = async () => {
     try {
       setPhotoPickerLoading(true);
+      console.log("📸 Starting Google Photo Picker...");
 
-      // Get Photo Picker URL from backend
-      const { pickerUrl, sessionId } = await apiCall(`/api/photos/picker/url?user_id=${userId}`);
-      console.log("Photo Picker response:", { pickerUrl, sessionId });
-
+      // Get OAuth URL for photo picker
+      const { authUrl, sessionId } = await apiCall("/api/oauth/url");
+      console.log("🔗 Photo Picker OAuth URL received, sessionId:", sessionId);
+      
       // Store session ID for later use
-      setPhotoPickerSessionId(sessionId);
+      setOauthSessionId(sessionId);
 
-      // Open picker in new window
-      const pickerWindow = window.open(pickerUrl, "photoPicker", "width=800,height=600,scrollbars=yes,resizable=yes,status=yes,toolbar=no,menubar=no,location=no");
-
-      if (!pickerWindow) {
-        throw new Error("Popup blocked. Please allow popups for this site.");
+      // Open in external browser
+      const supported = await Linking.canOpenURL(authUrl);
+      
+      if (supported) {
+        await Linking.openURL(authUrl);
+        Alert.alert(
+          "Photo Picker Started", 
+          "Please select your photos in the browser, then return to this app. The selected photos will appear automatically."
+        );
+      } else {
+        Alert.alert("Error", "Cannot open Photo Picker URL");
       }
-
-      // Focus the window
-      pickerWindow.focus();
-
-      // Show instructions after opening
-      Alert.alert("Photo Picker Opened", "Select your photos in the picker window, then click 'Fetch Selected Photos' to load them into the app.", [
-        {
-          text: "OK",
-          onPress: () => console.log("User acknowledged picker instructions"),
-        },
-      ]);
     } catch (error) {
-      console.error("Error opening Photo Picker:", error);
-      Alert.alert("Error", "Failed to open Photo Picker");
+      console.error("Error starting Photo Picker:", error);
+      Alert.alert("Error", "Failed to start Photo Picker");
     } finally {
       setPhotoPickerLoading(false);
     }
@@ -457,15 +504,16 @@ export default function App() {
                 <TouchableOpacity style={styles.photoButton} onPress={fetchPhotos}>
                   <Text style={styles.photoButtonText}>Load Drive Images</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.photoButton, photoPickerLoading && styles.disabledButton]} onPress={openPhotoPicker} disabled={photoPickerLoading}>
-                  <Text style={styles.photoButtonText}>{photoPickerLoading ? "Opening Picker..." : "Open Photo Picker"}</Text>
+                <TouchableOpacity style={[styles.photoButton, photoPickerLoading && styles.disabledButton]} onPress={startGooglePicker} disabled={photoPickerLoading}>
+                  <Text style={styles.photoButtonText}>{photoPickerLoading ? "Starting Picker..." : "Start Photo Picker"}</Text>
                 </TouchableOpacity>
-                {photoPickerSessionId && (
-                  <TouchableOpacity style={styles.photoButton} onPress={fetchSelectedPhotos}>
-                    <Text style={styles.photoButtonText}>Fetch Selected Photos</Text>
-                  </TouchableOpacity>
-                )}
               </View>
+              <Text style={styles.helpText}>
+                💡 The Photo Picker will open in your browser. Selected photos will appear automatically when you return to the app.
+              </Text>
+              <TouchableOpacity style={[styles.photoButton, { backgroundColor: "#ff6b6b", marginTop: 8 }]} onPress={testOAuthCallback}>
+                <Text style={styles.photoButtonText}>🧪 Test OAuth Callback</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Results sections */}
@@ -897,6 +945,13 @@ const styles = StyleSheet.create({
   photoDimensions: {
     fontSize: 10,
     color: "#999",
+    textAlign: "center",
+  },
+  helpText: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+    marginTop: 8,
     textAlign: "center",
   },
   // Photo Picker WebView styles

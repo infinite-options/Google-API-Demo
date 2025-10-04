@@ -656,6 +656,240 @@ app.post("/api/oauth/refresh", async (req, res) => {
   }
 });
 
+// ChatGPT suggested endpoints for better OAuth flow
+// 2.A /api/oauth/token — exchange code for tokens
+app.post("/api/oauth/token", async (req, res) => {
+  const { code, state } = req.body;
+  
+  console.log("🔄 OAuth Token Exchange Request Received");
+  console.log("📝 Request body:", JSON.stringify(req.body, null, 2));
+  console.log("📝 Request headers:", JSON.stringify(req.headers, null, 2));
+  
+  if (!code) {
+    console.log("❌ Missing code in request");
+    return res.status(400).json({ error: "Missing code" });
+  }
+
+  console.log("🔄 Exchanging OAuth code for tokens");
+  console.log("🔑 Code:", code);
+  console.log("🔑 State:", state);
+
+  try {
+    const params = new URLSearchParams();
+    params.append("code", code);
+    params.append("client_id", process.env.REACT_APP_GOOGLE_CLIENT_ID_WEB);
+    params.append("client_secret", process.env.REACT_APP_GOOGLE_CLIENT_SECRET_WEB);
+    params.append("redirect_uri", process.env.REDIRECT_URI);
+    params.append("grant_type", "authorization_code");
+
+    console.log("🌐 Making request to Google OAuth token endpoint");
+    console.log("🔗 URL: https://oauth2.googleapis.com/token");
+    console.log("📝 Params:", params.toString());
+    console.log("🔑 Client ID:", process.env.REACT_APP_GOOGLE_CLIENT_ID_WEB);
+    console.log("🔗 Redirect URI:", process.env.REDIRECT_URI);
+
+    const tokenResp = await axios.post(
+      "https://oauth2.googleapis.com/token",
+      params.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+      }
+    );
+
+    const tokens = tokenResp.data;
+    console.log("✅ Successfully exchanged code for tokens");
+    console.log("🔑 Tokens received:", JSON.stringify(tokens, null, 2));
+
+    // Store tokens with state for later retrieval
+    if (state) {
+      activeSessions.set(state, {
+        ...activeSessions.get(state),
+        tokens: tokens,
+        timestamp: Date.now()
+      });
+    }
+
+    res.json({ success: true, ...tokens });
+  } catch (err) {
+    console.error("❌ Error exchanging code:", err.response?.data || err.message);
+    console.error("❌ Full error response:", err.response);
+    console.error("❌ Error status:", err.response?.status);
+    console.error("❌ Error headers:", err.response?.headers);
+    res.status(500).json({ error: "Token exchange failed" });
+  }
+});
+
+// 2.B /api/picker/selection — store the selected items
+app.post("/api/picker/selection", (req, res) => {
+  const { state, selection } = req.body;
+  
+  if (!state || !Array.isArray(selection)) {
+    return res.status(400).json({ error: "Missing state or selection" });
+  }
+
+  console.log("📸 Storing picker selection for state:", state);
+
+  // Store selection in session
+  const session = activeSessions.get(state);
+  if (session) {
+    session.pickerSelection = selection;
+    session.timestamp = Date.now();
+    activeSessions.set(state, session);
+  } else {
+    // Create new session if doesn't exist
+    activeSessions.set(state, {
+      pickerSelection: selection,
+      timestamp: Date.now()
+    });
+  }
+
+  res.json({ success: true, message: "Selection stored successfully" });
+});
+
+// 2.C /api/picker/result — fetch results given a session
+app.get("/api/picker/result", (req, res) => {
+  const { session } = req.query;
+  
+  if (!session) {
+    return res.status(400).json({ error: "Missing session" });
+  }
+
+  console.log("📸 Fetching picker result for session:", session);
+
+  const result = activeSessions.get(session);
+  if (!result || !result.pickerSelection) {
+    return res.status(404).json({ error: "Selection not found" });
+  }
+
+  res.json({ 
+    success: true, 
+    selection: result.pickerSelection,
+    timestamp: result.timestamp
+  });
+});
+
+// OAuth callback endpoint that Google redirects to
+app.get("/oauth2/callback", async (req, res) => {
+  console.log("🔄 OAuth Callback Received from Google");
+  console.log("📝 Query params:", req.query);
+  console.log("📝 Full URL:", req.url);
+  
+  const { code, state, error } = req.query;
+  
+  if (error) {
+    console.error("❌ OAuth error from Google:", error);
+    return res.status(400).json({ 
+      error: "OAuth authorization failed", 
+      details: error 
+    });
+  }
+  
+  if (!code) {
+    console.error("❌ No code received from Google");
+    return res.status(400).json({ error: "No authorization code received" });
+  }
+
+  try {
+    // Exchange code for tokens
+    const params = new URLSearchParams();
+    params.append("code", code);
+    params.append("client_id", process.env.REACT_APP_GOOGLE_CLIENT_ID_WEB);
+    params.append("client_secret", process.env.REACT_APP_GOOGLE_CLIENT_SECRET_WEB);
+    params.append("redirect_uri", process.env.REDIRECT_URI);
+    params.append("grant_type", "authorization_code");
+
+    console.log("🔄 Exchanging code for tokens...");
+    console.log("🔑 Code:", code);
+    console.log("🔑 State:", state);
+    console.log("🔗 Redirect URI:", process.env.REDIRECT_URI);
+
+    const tokenResp = await axios.post(
+      "https://oauth2.googleapis.com/token",
+      params.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+      }
+    );
+
+    const tokens = tokenResp.data;
+    console.log("✅ Successfully exchanged code for tokens");
+    console.log("🔑 Tokens received:", JSON.stringify(tokens, null, 2));
+
+    // Store tokens with state for later retrieval
+    if (state) {
+      activeSessions.set(state, {
+        ...activeSessions.get(state),
+        tokens: tokens,
+        timestamp: Date.now()
+      });
+      console.log("💾 Tokens stored for state:", state);
+    }
+
+    // Redirect back to mobile app with deep link
+    const deepLinkUrl = `capshnz://photos/done?session=${state || 'unknown'}`;
+    console.log("🔗 Redirecting to deep link:", deepLinkUrl);
+    
+    res.redirect(deepLinkUrl);
+  } catch (error) {
+    console.error("❌ Error in OAuth callback:", error.response?.data || error.message);
+    console.error("❌ Full error:", error);
+    res.status(500).json({ 
+      error: "OAuth callback failed",
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+// Test endpoint to simulate OAuth callback
+app.get("/test-oauth-callback", async (req, res) => {
+  console.log("🧪 Testing OAuth callback simulation");
+  console.log("📝 Query params:", req.query);
+  
+  const { code, state } = req.query;
+  
+  if (!code) {
+    return res.status(400).json({ error: "Missing code parameter" });
+  }
+
+  try {
+    // Simulate the token exchange
+    const params = new URLSearchParams();
+    params.append("code", code);
+    params.append("client_id", process.env.REACT_APP_GOOGLE_CLIENT_ID_WEB);
+    params.append("client_secret", process.env.REACT_APP_GOOGLE_CLIENT_SECRET_WEB);
+    params.append("redirect_uri", process.env.REDIRECT_URI);
+    params.append("grant_type", "authorization_code");
+
+    console.log("🧪 Test - Making request to Google OAuth token endpoint");
+    console.log("🧪 Test - Params:", params.toString());
+
+    const tokenResp = await axios.post(
+      "https://oauth2.googleapis.com/token",
+      params.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+      }
+    );
+
+    const tokens = tokenResp.data;
+    console.log("🧪 Test - Successfully exchanged code for tokens");
+    console.log("🧪 Test - Tokens:", JSON.stringify(tokens, null, 2));
+
+    res.json({ 
+      success: true, 
+      message: "Test OAuth callback successful",
+      tokens: tokens
+    });
+  } catch (error) {
+    console.error("🧪 Test - Error exchanging code:", error.response?.data || error.message);
+    console.error("🧪 Test - Full error:", error);
+    res.status(500).json({ 
+      error: "Test token exchange failed",
+      details: error.response?.data || error.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error("Unhandled error:", error);
