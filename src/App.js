@@ -11,7 +11,7 @@ console.log("REACT_APP_GOOGLE_CLIENT_SECRET_WEB:", clientSecret ? `***${clientSe
 console.log("Note: Google requires client_secret even with PKCE (non-standard behavior)");
 
 const scope =
-  "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photoslibrary.readonly https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
+  "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
 
 // Utility: base64url encode
 function base64urlencode(arrayBuffer) {
@@ -77,7 +77,6 @@ function App() {
             "https://www.googleapis.com/auth/userinfo.email",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/calendar.readonly",
-            "https://www.googleapis.com/auth/photoslibrary.readonly",
             "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
           ];
 
