@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 
 // Backend API configuration
+// This will use the URL from the npm script (e.g., start:secure:local sets REACT_APP_API_URL)
+// Falls back to localhost:3001 if no environment variable is set
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 function AppSecure() {
@@ -13,11 +15,21 @@ function AppSecure() {
   console.log("🔒 SECURE MODE: Backend-enabled (Backend required)");
   console.log("🛡️ All Google API calls routed through secure backend");
   
-  // Determine backend type
+  // Determine backend type and port
   const isLocalBackend = API_BASE_URL.includes('localhost') || API_BASE_URL.includes('127.0.0.1');
-  const backendType = isLocalBackend ? "🏠 LOCAL" : "☁️ REMOTE";
+  let backendType = "☁️ REMOTE";
+  let portInfo = "";
   
-  console.log(`📡 Backend: ${backendType} - ${API_BASE_URL}`);
+  if (isLocalBackend) {
+    backendType = "🏠 LOCAL";
+    const portMatch = API_BASE_URL.match(/:(\d+)/);
+    if (portMatch) {
+      const port = portMatch[1];
+      portInfo = ` (Port ${port})`;
+    }
+  }
+  
+  console.log(`📡 Backend: ${backendType}${portInfo} - ${API_BASE_URL}`);
 
   const [profile, setProfile] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
@@ -33,7 +45,7 @@ function AppSecure() {
     const token = localStorage.getItem("access_token");
     if (token) {
       setAccessToken(token);
-      // Optionally fetch profile on app start
+      // Only fetch profile if we have a valid token
       fetchProfile();
     }
   }, []);
@@ -61,13 +73,21 @@ function AppSecure() {
   };
 
   const fetchProfile = async () => {
+    if (!accessToken) {
+      console.log("No access token available, skipping profile fetch");
+      return;
+    }
+    
     try {
       setLoading(true);
       const profileData = await apiCall("/api/user/profile");
       setProfile(profileData);
     } catch (error) {
       console.error("Error fetching profile:", error);
-      alert("Failed to fetch profile");
+      // Only show alert if we're not in the middle of OAuth flow
+      if (!window.location.search.includes('sessionId')) {
+        alert("Failed to fetch profile");
+      }
     } finally {
       setLoading(false);
     }
@@ -212,44 +232,101 @@ function AppSecure() {
   // Handle OAuth callback
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get("code");
-    const state = urlParams.get("state");
+    const sessionId = urlParams.get("sessionId");
+    const success = urlParams.get("success");
 
-    if (code && state) {
-      const sessionId = sessionStorage.getItem("oauth_session_id");
+    // Handle session ID callback (new approach)
+    if (sessionId && success === "true") {
+      // Check if we've already processed this session to prevent multiple executions
+      const processedSession = sessionStorage.getItem(`processed_session_${sessionId}`);
+      if (processedSession) {
+        console.log("Session already processed, skipping");
+        return;
+      }
+      
+      console.log("🎉 OAuth callback received with sessionId:", sessionId);
+      
+      const processSession = async () => {
+        try {
+          setLoading(true);
+          
+          // Mark session as being processed
+          sessionStorage.setItem(`processed_session_${sessionId}`, "true");
+          
+          // Get tokens using session ID
+          const tokenData = await apiCall(`/api/oauth/token/${sessionId}`, {
+            method: "GET",
+          });
 
-      if (sessionId === state) {
-        // Exchange code for token via backend
-        const exchangeToken = async () => {
-          try {
-            setLoading(true);
-            const tokenData = await apiCall("/api/oauth/token", {
-              method: "POST",
-              body: JSON.stringify({ code, state }),
-            });
+          // Store token
+          localStorage.setItem("access_token", tokenData.access_token);
+          setAccessToken(tokenData.access_token);
 
-            // Store token
-            localStorage.setItem("access_token", tokenData.access_token);
-            setAccessToken(tokenData.access_token);
+          // Fetch profile with the access token
+          const profileData = await apiCall("/api/user/profile", {
+            headers: {
+              Authorization: `Bearer ${tokenData.access_token}`,
+            },
+          });
+          setProfile(profileData);
 
-            // Fetch profile
-            const profileData = await apiCall("/api/user/profile");
-            setProfile(profileData);
+          // Clean up URL
+          window.history.replaceState({}, document.title, "/");
+          sessionStorage.removeItem("oauth_session_id");
 
-            // Clean up URL
-            window.history.replaceState({}, document.title, "/");
-            sessionStorage.removeItem("oauth_session_id");
+          // Show success message only once
+          console.log("✅ Successfully signed in with Google!");
+        } catch (error) {
+          console.error("Session processing error:", error);
+          alert("Authentication failed");
+        } finally {
+          setLoading(false);
+        }
+      };
 
-            alert("Successfully signed in with Google!");
-          } catch (error) {
-            console.error("Token exchange error:", error);
-            alert("Authentication failed");
-          } finally {
-            setLoading(false);
-          }
-        };
+      processSession();
+    }
+    // Handle legacy code/state callback (fallback)
+    else {
+      const code = urlParams.get("code");
+      const state = urlParams.get("state");
 
-        exchangeToken();
+      if (code && state) {
+        const storedSessionId = sessionStorage.getItem("oauth_session_id");
+
+        if (storedSessionId === state) {
+          // Exchange code for token via backend
+          const exchangeToken = async () => {
+            try {
+              setLoading(true);
+              const tokenData = await apiCall("/api/oauth/token", {
+                method: "POST",
+                body: JSON.stringify({ code, state }),
+              });
+
+              // Store token
+              localStorage.setItem("access_token", tokenData.access_token);
+              setAccessToken(tokenData.access_token);
+
+              // Fetch profile
+              const profileData = await apiCall("/api/user/profile");
+              setProfile(profileData);
+
+              // Clean up URL
+              window.history.replaceState({}, document.title, "/");
+              sessionStorage.removeItem("oauth_session_id");
+
+              alert("Successfully signed in with Google!");
+            } catch (error) {
+              console.error("Token exchange error:", error);
+              alert("Authentication failed");
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          exchangeToken();
+        }
       }
     }
   }, []);

@@ -17,11 +17,13 @@
     "start:standard": "REACT_APP_SECURE_MODE=false react-scripts start",
     "start:secure": "REACT_APP_SECURE_MODE=true react-scripts start",
     "start:secure:local": "REACT_APP_SECURE_MODE=true REACT_APP_API_URL=http://localhost:3001 react-scripts start",
+    "start:secure:4030": "REACT_APP_SECURE_MODE=true REACT_APP_API_URL=http://localhost:4030 react-scripts start",
     "start:secure:backend": "REACT_APP_SECURE_MODE=true REACT_APP_API_URL=https://bmarz6chil.execute-api.us-west-1.amazonaws.com/dev react-scripts start",
     "build": "react-scripts build",
     "build:standard": "REACT_APP_SECURE_MODE=false react-scripts build",
     "build:secure": "REACT_APP_SECURE_MODE=true react-scripts build",
     "build:secure:local": "REACT_APP_SECURE_MODE=true REACT_APP_API_URL=http://localhost:3001 react-scripts build",
+    "build:secure:4030": "REACT_APP_SECURE_MODE=true REACT_APP_API_URL=http://localhost:4030 react-scripts build",
     "build:secure:backend": "REACT_APP_SECURE_MODE=true REACT_APP_API_URL=https://bmarz6chil.execute-api.us-west-1.amazonaws.com/dev react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

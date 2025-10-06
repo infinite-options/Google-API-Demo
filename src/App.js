@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 
 const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID_WEB;
 const clientSecret = process.env.REACT_APP_GOOGLE_CLIENT_SECRET_WEB;
-const redirectUri = "http://localhost:3000"; // MUST match dev server
+const redirectUri = process.env.REACT_APP_REDIRECT_URI || "http://localhost:3000";
 
 // Debug: Log environment variables to confirm they're loaded
 console.log("Environment variables loaded:");
