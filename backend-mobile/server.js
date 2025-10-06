@@ -32,7 +32,7 @@ app.use(
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-user-id"],
   })
 );
 
@@ -129,7 +129,87 @@ app.get("/api/oauth/url", (req, res) => {
   }
 });
 
-// 3. Exchange code for token
+// 3. OAuth callback endpoint (where Google redirects)
+app.get("/oauth2/callback", async (req, res) => {
+  console.log("🔄 OAuth Callback Received from Google");
+  console.log("📝 Query params:", req.query);
+  
+  const { code, state, error } = req.query;
+  
+  if (error) {
+    console.error("❌ OAuth error:", error);
+    return res.status(400).json({ error: `OAuth error: ${error}` });
+  }
+  
+  if (!code) {
+    console.error("❌ No authorization code received");
+    return res.status(400).json({ error: "No authorization code received" });
+  }
+  
+  try {
+    // Retrieve code verifier from session
+    const session = activeSessions.get(state);
+    if (!session) {
+      return res.status(400).json({ error: "Invalid or expired session" });
+    }
+
+    const { codeVerifier } = session;
+
+    // Exchange code for token
+    const tokenResponse = await axios.post(
+      "https://oauth2.googleapis.com/token",
+      {
+        client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID_WEB,
+        client_secret: process.env.REACT_APP_GOOGLE_CLIENT_SECRET_WEB,
+        code: code,
+        grant_type: "authorization_code",
+        redirect_uri: process.env.REDIRECT_URI,
+        code_verifier: codeVerifier,
+      }
+    );
+
+    const tokens = tokenResponse.data;
+    console.log("✅ Tokens received:", tokens);
+
+    // Extract user ID from id_token
+    let userId = null;
+    if (tokens.id_token) {
+      try {
+        // Decode the JWT id_token to get user info
+        const base64Url = tokens.id_token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        
+        const userInfo = JSON.parse(jsonPayload);
+        userId = userInfo.sub; // 'sub' is the user ID in Google's id_token
+        console.log("✅ Extracted user ID from id_token:", userId);
+      } catch (error) {
+        console.error("❌ Failed to decode id_token:", error);
+      }
+    }
+
+    // Store tokens with session ID
+    activeSessions.set(state, {
+      ...session,
+      tokens: tokens,
+      userId: userId,
+      timestamp: Date.now()
+    });
+
+    // Redirect to React Native web app with tokens
+    const frontendUrl = `http://localhost:8081?access_token=${tokens.access_token}&refresh_token=${tokens.refresh_token}&sessionId=${state}&user_id=${userId}`;
+    console.log("🌐 Redirecting to React Native web app:", frontendUrl);
+    res.redirect(frontendUrl);
+    
+  } catch (error) {
+    console.error("❌ Token exchange failed:", error.response?.data || error.message);
+    res.status(500).json({ error: "Token exchange failed" });
+  }
+});
+
+// 4. Exchange code for token
 app.post("/api/oauth/token", async (req, res) => {
   try {
     const { code, state, userId } = req.body;
@@ -416,6 +496,93 @@ app.post("/api/photos/picker/session", async (req, res) => {
   }
 });
 
+// 8.5. Proxy Google Photos images with authentication
+app.options("/api/photos/proxy", (req, res) => {
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-ID'
+  });
+  res.status(200).end();
+});
+
+app.get("/api/photos/proxy", async (req, res) => {
+  try {
+    const { url, user_id } = req.query;
+    console.log("🔍 Proxy request:", { 
+      url: url?.substring(0, 50) + "...", 
+      user_id
+    });
+    
+    if (!url) {
+      return res.status(400).json({ error: "URL is required" });
+    }
+
+    let accessToken;
+    
+    // Get access token from user_id
+    if (user_id) {
+      console.log("🔍 Looking for user token for user_id:", user_id);
+      let userToken = userTokens.get(user_id);
+      
+      // If not found in userTokens, check activeSessions
+      if (!userToken) {
+        console.log("🔍 Checking activeSessions...");
+        for (const [sessionId, session] of activeSessions.entries()) {
+          if (session.userId === user_id && session.tokens) {
+            console.log("🔍 Found token in activeSessions for user_id:", user_id);
+            userToken = {
+              access_token: session.tokens.access_token,
+              refresh_token: session.tokens.refresh_token,
+              expires_at: Date.now() + (session.tokens.expires_in * 1000),
+              user_id: user_id,
+            };
+            userTokens.set(user_id, userToken);
+            break;
+          }
+        }
+      }
+      
+      if (!userToken || Date.now() > userToken.expires_at) {
+        return res.status(401).json({ error: "Token expired or invalid" });
+      }
+      accessToken = userToken.access_token;
+    } else {
+      return res.status(401).json({ error: "Missing user_id" });
+    }
+    
+    console.log("🔍 Fetching image from Google Photos with token:", accessToken.substring(0, 20) + "...");
+    
+    // Fetch the image with proper authentication
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      responseType: 'stream'
+    });
+    console.log("🔍 Image fetch successful, status:", response.status);
+
+    // Set appropriate headers
+    res.set({
+      'Content-Type': response.headers['content-type'] || 'image/jpeg',
+      'Cache-Control': 'public, max-age=3600',
+      'Content-Length': response.headers['content-length'],
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-ID'
+    });
+
+    // Pipe the image data to the response
+    console.log("🔍 Streaming image data to client, Content-Type:", response.headers['content-type']);
+    response.data.pipe(res);
+
+  } catch (error) {
+    console.error("❌ Error proxying image:", error.message);
+    console.error("❌ Error details:", error.response?.data || error.response?.status);
+    res.status(500).json({ error: "Failed to load image" });
+  }
+});
+
 // 9. Get selected photos from Photo Picker
 app.get("/api/photos/picker/media", async (req, res) => {
   try {
@@ -454,16 +621,35 @@ app.get("/api/photos/picker/media", async (req, res) => {
     for (const item of response.data.mediaItems || []) {
       const baseUrl = item.mediaFile?.baseUrl;
       if (baseUrl) {
-        const thumbnailUrl = baseUrl + "=w200-h200";
+        // Google Photos URLs need proper formatting with size parameters
+        const fullImageUrl = baseUrl + "=w2048-h2048"; // Full size image
+        const thumbnailUrl = baseUrl + "=w200-h200";   // Thumbnail
+        
+        console.log("📸 Processing photo:", {
+          id: item.id,
+          filename: item.mediaFile?.filename,
+          mimeType: item.mediaFile?.mimeType,
+          baseUrl: baseUrl.substring(0, 100) + "...",
+          fullImageUrl: fullImageUrl.substring(0, 100) + "...",
+          thumbnailUrl: thumbnailUrl.substring(0, 100) + "..."
+        });
+        
+        // Create proxy URLs that include authentication
+        const proxyImageUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/api/photos/proxy?url=${encodeURIComponent(fullImageUrl)}&user_id=${user_id}`;
+        const proxyThumbnailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/api/photos/proxy?url=${encodeURIComponent(thumbnailUrl)}&user_id=${user_id}`;
+        
         photos.push({
           id: item.id,
           name: item.mediaFile?.filename || `Photo ${item.id}`,
-          url: baseUrl,
-          thumbnails: [{ url: thumbnailUrl }],
+          url: proxyImageUrl,
+          thumbnails: [{ url: proxyThumbnailUrl }],
           mimeType: item.mediaFile?.mimeType,
           creationTime: item.createTime,
           width: item.mediaFileMetadata?.width,
           height: item.mediaFileMetadata?.height,
+          // Keep original URLs for debugging
+          originalUrl: fullImageUrl,
+          originalThumbnailUrl: thumbnailUrl,
         });
       }
     }

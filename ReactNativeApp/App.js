@@ -45,35 +45,68 @@ export default function App() {
   const [imageErrors, setImageErrors] = useState({});
 
   useEffect(() => {
-    // Check if we have stored credentials
-    const storedToken = null; // In production, use SecureStore
-    const storedUserId = null; // In production, use SecureStore
-
-    if (storedToken && storedUserId) {
-      setAccessToken(storedToken);
-      setUserId(storedUserId);
-      fetchProfile();
-    }
-
-    // Handle OAuth callback for web platform
+    console.log("App useEffect running, checking for credentials...");
+    
+    // Check for OAuth tokens in URL parameters (web platform)
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get("code");
-      const state = urlParams.get("state");
-
-      if (code && state) {
-        const storedSessionId = window.sessionStorage.getItem("oauth_session_id");
-
-        if (storedSessionId === state) {
-          // Process OAuth callback
-          handleOAuthCallback(code, state);
-        } else {
-          console.error("Invalid state parameter");
-          Alert.alert("Error", "Invalid OAuth state");
+      const accessToken = urlParams.get("access_token");
+      const refreshToken = urlParams.get("refresh_token");
+      const sessionId = urlParams.get("sessionId");
+      const userId = urlParams.get("user_id");
+      
+      console.log("URL parameters:", { accessToken: !!accessToken, refreshToken: !!refreshToken, sessionId, userId });
+      
+      if (accessToken && refreshToken && sessionId && userId) {
+        console.log("OAuth tokens found in URL, storing and fetching profile...");
+        console.log("URL userId:", userId);
+        
+        // Store tokens and user ID
+        setAccessToken(accessToken);
+        setUserId(userId);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("access_token", accessToken);
+          window.sessionStorage.setItem("refresh_token", refreshToken);
+          window.sessionStorage.setItem("sessionId", sessionId);
+          window.sessionStorage.setItem("user_id", userId);
         }
+        
+        // Clear URL parameters
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return; // Exit early, don't check stored credentials
+      }
+      
+      // Only check stored credentials if no URL parameters were found
+      const storedToken = window.sessionStorage.getItem("access_token");
+      const storedUserId = window.sessionStorage.getItem("user_id");
+      
+      console.log("Stored credentials:", { storedToken: !!storedToken, storedUserId });
+      console.log("All sessionStorage keys:", Object.keys(window.sessionStorage));
+      
+      if (storedToken && storedUserId) {
+        console.log("Restoring stored credentials...");
+        console.log("Stored userId:", storedUserId);
+        setAccessToken(storedToken);
+        setUserId(storedUserId);
+      } else {
+        console.log("No stored credentials found");
       }
     }
+
   }, []);
+
+  // Monitor userId changes
+  useEffect(() => {
+    console.log("userId state changed to:", userId);
+  }, [userId]);
+
+  // Fetch profile when userId changes
+  useEffect(() => {
+    if (userId && accessToken) {
+      console.log("UserId and accessToken available, fetching profile...");
+      fetchProfile();
+    }
+  }, [userId, accessToken]);
 
   const handleOAuthCallback = async (code, state) => {
     try {
@@ -243,9 +276,18 @@ export default function App() {
   };
 
   const fetchProfile = async () => {
+    console.log("fetchProfile called with userId:", userId, "accessToken:", !!accessToken);
+    
+    if (!userId) {
+      console.log("No userId available, skipping profile fetch");
+      return;
+    }
+    
     try {
       setLoading(true);
+      console.log("Fetching profile for userId:", userId);
       const profileData = await apiCall(`/api/user/profile?user_id=${userId}`);
+      console.log("Profile data received:", profileData);
       setProfile(profileData);
     } catch (error) {
       console.error("Error fetching profile:", error);
@@ -534,6 +576,14 @@ export default function App() {
                         <Text style={styles.photoType}>{photo.mimeType?.includes("image") ? "🖼️ Image" : "📄 File"}</Text>
                         {photo.size && <Text style={styles.photoSize}>{formatFileSize(photo.size)}</Text>}
                         {photo.modifiedTime && <Text style={styles.photoDate}>{formatDate(photo.modifiedTime)}</Text>}
+                        <Text style={styles.photoUrl} numberOfLines={2}>
+                          URL: {photo.url?.substring(0, 80)}...
+                        </Text>
+                        {photo.thumbnails?.[0]?.url && (
+                          <Text style={styles.photoUrl} numberOfLines={2}>
+                            Thumb: {photo.thumbnails[0].url.substring(0, 80)}...
+                          </Text>
+                        )}
                       </View>
                     </View>
                   ))}
@@ -584,6 +634,22 @@ export default function App() {
                           </Text>
                         )}
                         {photo.creationTime && <Text style={styles.photoDate}>📅 {formatDate(photo.creationTime)}</Text>}
+                        <Text style={styles.photoUrl} numberOfLines={2}>
+                          Proxy URL: {photo.url?.substring(0, 80)}...
+                        </Text>
+                        {photo.thumbnails?.[0]?.url && (
+                          <Text style={styles.photoUrl} numberOfLines={2}>
+                            Proxy Thumb: {photo.thumbnails[0].url.substring(0, 80)}...
+                          </Text>
+                        )}
+                        {photo.originalUrl && (
+                          <Text style={styles.photoUrl} numberOfLines={2}>
+                            Original: {photo.originalUrl.substring(0, 80)}...
+                          </Text>
+                        )}
+                        <Text style={styles.photoMimeType}>
+                          Type: {photo.mimeType || "Unknown"}
+                        </Text>
                       </View>
                     </View>
                   ))}
@@ -898,6 +964,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: "#999",
     textAlign: "center",
+  },
+  photoUrl: {
+    fontSize: 8,
+    color: "#666",
+    textAlign: "center",
+    fontFamily: "monospace",
+    marginTop: 2,
+  },
+  photoMimeType: {
+    fontSize: 9,
+    color: "#888",
+    textAlign: "center",
+    marginTop: 2,
   },
   // Photo Picker WebView styles
   header: {
