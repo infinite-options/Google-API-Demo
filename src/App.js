@@ -29,6 +29,10 @@ async function sha256(plain) {
 }
 
 function App() {
+  // App mode information
+  console.log("🚀 STANDARD MODE: Direct API calls (No backend required)");
+  console.log("📡 All Google API calls made directly from frontend");
+
   const [profile, setProfile] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
   const [driveFiles, setDriveFiles] = useState(null);

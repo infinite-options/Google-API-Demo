@@ -4,6 +4,21 @@ import React, { useState, useEffect } from "react";
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 function AppSecure() {
+  // Debug environment variables
+  console.log("🔍 Environment variables:");
+  console.log("  REACT_APP_API_URL:", process.env.REACT_APP_API_URL);
+  console.log("  API_BASE_URL:", API_BASE_URL);
+  
+  // App mode information
+  console.log("🔒 SECURE MODE: Backend-enabled (Backend required)");
+  console.log("🛡️ All Google API calls routed through secure backend");
+  
+  // Determine backend type
+  const isLocalBackend = API_BASE_URL.includes('localhost') || API_BASE_URL.includes('127.0.0.1');
+  const backendType = isLocalBackend ? "🏠 LOCAL" : "☁️ REMOTE";
+  
+  console.log(`📡 Backend: ${backendType} - ${API_BASE_URL}`);
+
   const [profile, setProfile] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
   const [driveFiles, setDriveFiles] = useState(null);
