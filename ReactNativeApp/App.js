@@ -37,17 +37,15 @@ const PHOTO_SIZE = (width - 60) / 3;
 export default function App() {
   const [profile, setProfile] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
-  const [userId, setUserId] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
   const [driveFiles, setDriveFiles] = useState(null);
   const [calendarEvents, setCalendarEvents] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [selectedPhotos, setSelectedPhotos] = useState([]);
   const [googlePhotos, setGooglePhotos] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [photoPickerSessionId, setPhotoPickerSessionId] = useState(null);
   const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState({});
-  const [oauthSessionId, setOauthSessionId] = useState(null);
   const [apiResponse, setApiResponse] = useState(null);
   const [apiError, setApiError] = useState(null);
   const [currentApiUrl, setCurrentApiUrl] = useState(null);
@@ -65,7 +63,8 @@ export default function App() {
           const sessionId = parsed.searchParams.get('sessionId');
           if (sessionId) {
             console.log('📸 Photo picker completed, fetching results for sessionId:', sessionId);
-            fetchPickerResult(sessionId);
+            setSessionId(sessionId);
+            fetchTokensAndProfile(sessionId);
           }
         }
         // Also support legacy capshnz:// format
@@ -73,7 +72,8 @@ export default function App() {
           const session = parsed.searchParams.get('session');
           if (session) {
             console.log('📸 Photo picker completed (legacy), fetching results for session:', session);
-            fetchPickerResult(session);
+            setSessionId(session);
+            fetchTokensAndProfile(session);
           }
         }
       } catch (error) {
@@ -92,32 +92,29 @@ export default function App() {
       }
     });
 
-    // Check if we have stored credentials
-    const storedToken = null; // In production, use SecureStore
-    const storedUserId = null; // In production, use SecureStore
+    // Check if we have a stored session ID
+    const storedSessionId = null; // In production, use SecureStore
 
-    if (storedToken && storedUserId) {
-      setAccessToken(storedToken);
-      setUserId(storedUserId);
+    if (storedSessionId) {
+      setSessionId(storedSessionId);
       fetchProfile();
     }
 
     // Handle OAuth callback for web platform
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get("code");
-      const state = urlParams.get("state");
+      const sessionId = urlParams.get("sessionId");
+      const success = urlParams.get("success");
 
-      if (code && state) {
-        const storedSessionId = window.sessionStorage.getItem("oauth_session_id");
-
-        if (storedSessionId === state) {
-          // Process OAuth callback
-          handleOAuthCallback(code, state);
-        } else {
-          console.error("Invalid state parameter");
-          Alert.alert("Error", "Invalid OAuth state");
-        }
+      if (sessionId && success === "true") {
+        console.log('🎉 OAuth callback received with sessionId:', sessionId);
+        setSessionId(sessionId);
+        
+        // Fetch tokens and profile first, then fetch picker results
+        fetchTokensAndProfile(sessionId);
+        
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
 
@@ -129,16 +126,50 @@ export default function App() {
     };
   }, []);
 
+  // Fetch tokens and profile from backend
+  const fetchTokensAndProfile = async (sessionId) => {
+    try {
+      console.log('🔑 Fetching tokens and profile for sessionId:', sessionId);
+      
+      // Get tokens from backend
+      const tokenData = await apiCall(`/api/oauth/token/${sessionId}`, { method: "GET" });
+      console.log('✅ Tokens received:', tokenData);
+      
+      setAccessToken(tokenData.access_token);
+      
+      // Fetch profile with the token
+      const profileData = await apiCall("/api/user/profile", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      setProfile(profileData);
+      
+      // Don't fetch picker results automatically - wait for user to click "Start Photo Picker"
+      console.log('✅ Authentication completed successfully!');
+      
+    } catch (error) {
+      console.error('❌ Failed to fetch tokens and profile:', error);
+      Alert.alert("Error", "Failed to complete authentication");
+    }
+  };
+
   // Fetch picker results from backend
-  const fetchPickerResult = async (session) => {
+  const fetchPickerResult = async (session, explicitAccessToken = null) => {
     try {
       console.log('📸 Fetching picker result for session:', session);
-      const response = await apiCall(`/api/picker/result?session=${encodeURIComponent(session)}`);
+      const response = await apiCall(`/api/photos/picker/media?sessionId=${encodeURIComponent(session)}`, {
+        headers: {
+          // Use the explicitAccessToken if provided, otherwise fall back to state
+          ...(explicitAccessToken && { Authorization: `Bearer ${explicitAccessToken}` }),
+        },
+      });
       
-      if (response.success && response.selection) {
-        console.log('✅ Photo picker results received:', response.selection.length, 'photos');
-        setGooglePhotos(response.selection);
-        Alert.alert("Success", `Selected ${response.selection.length} photos from Google Photos!`);
+      // Handle both response formats
+      const photos = response.photos || response.mediaItems || [];
+      
+      if (photos.length > 0) {
+        console.log('✅ Photo picker results received:', photos.length, 'photos');
+        setGooglePhotos(photos);
+        Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
       } else {
         console.log('❌ No selection found for session:', session);
         Alert.alert("No Photos", "No photos were selected in the picker");
@@ -162,58 +193,6 @@ export default function App() {
     }
   };
 
-  const handleOAuthCallback = async (code, state) => {
-    try {
-      setLoading(true);
-      console.log("Processing OAuth callback...");
-      console.log("Using API URL:", currentApiUrl);
-
-      // Use the correct API URL based on which button was pressed
-      const apiUrl = currentApiUrl || API_BASE_URL;
-      
-      // Exchange code for token
-      const tokenData = await apiCallWithUrl(apiUrl, "/api/oauth/token", {
-        method: "POST",
-        data: { code, state, userId: crypto.randomUUID() },
-      });
-
-      console.log("Token exchange successful:", tokenData);
-
-      setAccessToken(tokenData.access_token);
-      setUserId(tokenData.user_id);
-
-      // Wait a moment for state to update, then fetch profile
-      setTimeout(async () => {
-        try {
-          console.log("Fetching profile with token:", tokenData.access_token);
-
-          // Fetch profile directly with the token
-          const profileData = await apiCallWithUrl(apiUrl, `/api/user/profile?user_id=${tokenData.user_id}`, {
-            headers: {
-              Authorization: `Bearer ${tokenData.access_token}`,
-            },
-          });
-
-          setProfile(profileData);
-
-          // Clean up URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-          window.sessionStorage.removeItem("oauth_session_id");
-
-          Alert.alert("Success", "Successfully signed in with Google!");
-        } catch (profileError) {
-          console.error("Profile fetch error:", profileError);
-          Alert.alert("Error", "Profile fetch failed");
-        }
-      }, 100);
-    } catch (error) {
-      console.error("OAuth callback error:", error);
-      Alert.alert("Error", "Authentication failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // API helper function
   const apiCall = async (endpoint, options = {}) => {
     const url = `${API_BASE_URL}${endpoint}`;
@@ -222,7 +201,6 @@ export default function App() {
       headers: {
         "Content-Type": "application/json",
         ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
-        ...(userId && { "X-User-ID": userId }),
         ...options.headers,
       },
     };
@@ -260,7 +238,6 @@ export default function App() {
       headers: {
         "Content-Type": "application/json",
         ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
-        ...(userId && { "X-User-ID": userId }),
         ...options.headers,
       },
     };
@@ -305,15 +282,10 @@ export default function App() {
       const { authUrl, sessionId } = response;
       
       // Store session ID for later use
-      setOauthSessionId(sessionId);
+      setSessionId(sessionId);
 
       // For web platform, use direct window redirect
       if (Platform.OS === "web") {
-        // Store session ID for later verification
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem("oauth_session_id", sessionId);
-        }
-
         // Redirect to Google OAuth
         window.location.href = authUrl;
         return;
@@ -358,15 +330,10 @@ export default function App() {
       const { authUrl, sessionId } = response;
       
       // Store session ID for later use
-      setOauthSessionId(sessionId);
+      setSessionId(sessionId);
 
       // For web platform, use direct window redirect
       if (Platform.OS === "web") {
-        // Store session ID for later verification
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem("oauth_session_id", sessionId);
-        }
-
         // Redirect to Google OAuth
         window.location.href = authUrl;
         return;
@@ -412,7 +379,7 @@ export default function App() {
       const { authUrl, sessionId } = response;
       
       // Store session ID for later use
-      setOauthSessionId(sessionId);
+      setSessionId(sessionId);
 
       // Open OAuth URL in browser
       console.log("🌐 Opening OAuth URL in browser...");
@@ -439,21 +406,17 @@ export default function App() {
   const logout = async () => {
     setProfile(null);
     setAccessToken(null);
-    setUserId(null);
+    setSessionId(null);
     setDriveFiles(null);
     setCalendarEvents(null);
     setSelectedPhotos([]);
     setGooglePhotos([]);
-
-    // Clear stored credentials (in production, use SecureStore)
-    // await SecureStore.deleteItemAsync('access_token');
-    // await SecureStore.deleteItemAsync('user_id');
   };
 
   const fetchProfile = async () => {
     try {
       setLoading(true);
-      const profileData = await apiCall(`/api/user/profile?user_id=${userId}`);
+      const profileData = await apiCall(`/api/user/profile?sessionId=${sessionId}`);
       setProfile(profileData);
     } catch (error) {
       console.error("Error fetching profile:", error);
@@ -466,7 +429,7 @@ export default function App() {
   const fetchDriveFiles = async () => {
     try {
       setLoading(true);
-      const data = await apiCall(`/api/drive/files?user_id=${userId}`);
+      const data = await apiCall(`/api/drive/files?sessionId=${sessionId}`);
       setDriveFiles(data);
     } catch (error) {
       console.error("Error fetching Drive files:", error);
@@ -479,7 +442,7 @@ export default function App() {
   const fetchCalendarEvents = async () => {
     try {
       setLoading(true);
-      const data = await apiCall(`/api/calendar/events?date=${selectedDate}&user_id=${userId}`);
+      const data = await apiCall(`/api/calendar/events?date=${selectedDate}&sessionId=${sessionId}`);
       setCalendarEvents(data);
     } catch (error) {
       console.error("Error fetching Calendar events:", error);
@@ -492,7 +455,7 @@ export default function App() {
   const fetchPhotos = async () => {
     try {
       setLoading(true);
-      const data = await apiCall(`/api/drive/photos?user_id=${userId}`);
+      const data = await apiCall(`/api/drive/photos?sessionId=${sessionId}`);
       setSelectedPhotos(data.photos);
     } catch (error) {
       console.error("Error fetching photos:", error);
@@ -503,62 +466,85 @@ export default function App() {
   };
 
   const startGooglePicker = async () => {
+    if (!accessToken) {
+      Alert.alert("Not Authenticated", "Please sign in first before using the Photo Picker.");
+      return;
+    }
+
     try {
       setPhotoPickerLoading(true);
       console.log("📸 Starting Google Photo Picker...");
 
-      // Get OAuth URL for photo picker
-      const { authUrl, sessionId } = await apiCall("/api/oauth/url");
-      console.log("🔗 Photo Picker OAuth URL received, sessionId:", sessionId);
-      
-      // Store session ID for later use
-      setOauthSessionId(sessionId);
+      // Create Photo Picker session
+      const session = await apiCall("/api/photos/picker/session", {
+        method: "POST",
+      });
 
-      // Open in external browser
-      const supported = await Linking.canOpenURL(authUrl);
-      
-      if (supported) {
-        await Linking.openURL(authUrl);
-        Alert.alert(
-          "Photo Picker Started", 
-          "Please select your photos in the browser, then return to this app. The selected photos will appear automatically."
-        );
-      } else {
-        Alert.alert("Error", "Cannot open Photo Picker URL");
+      if (!session.pickerUri) {
+        throw new Error("Failed to get picker URI");
       }
+
+      console.log("Redirecting to Photo Picker UI:", session.pickerUri);
+
+      // Open the picker in a new window/tab
+      const pickerWindow = window.open(session.pickerUri, "_blank", "width=800,height=600");
+
+      // Poll for when the window is closed or check for updates
+      const checkPickerStatus = setInterval(async () => {
+        if (pickerWindow.closed) {
+          clearInterval(checkPickerStatus);
+
+          // Wait a bit for the session to be updated on Google's side
+          setTimeout(async () => {
+            try {
+              const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
+              
+              // Handle both response formats
+              const photos = data.photos || data.mediaItems || [];
+              
+              if (photos.length > 0) {
+                console.log('✅ Photo picker results received:', photos.length, 'photos');
+                setGooglePhotos(photos);
+                Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
+              } else {
+                console.log('❌ No selection found for session:', session.id);
+                Alert.alert("No Photos", "No photos were selected in the picker");
+              }
+            } catch (error) {
+              console.error('❌ Failed to fetch picker result:', error);
+              Alert.alert("Error", "Failed to fetch selected photos");
+            }
+          }, 3000); // Wait 3 seconds for session to update
+        }
+      }, 1000);
+
+      // Also try to fetch photos after a longer delay in case the window doesn't close properly
+      setTimeout(async () => {
+        clearInterval(checkPickerStatus);
+        try {
+          const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
+          
+          // Handle both response formats
+          const photos = data.photos || data.mediaItems || [];
+          
+          if (photos.length > 0) {
+            console.log('✅ Photo picker results received:', photos.length, 'photos');
+            setGooglePhotos(photos);
+            Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
+          } else {
+            console.log('❌ No selection found for session:', session.id);
+            Alert.alert("No Photos", "No photos were selected in the picker");
+          }
+        } catch (error) {
+          console.error('❌ Failed to fetch picker result:', error);
+          Alert.alert("Error", "Failed to fetch selected photos");
+        }
+      }, 30000); // 30 second timeout
     } catch (error) {
       console.error("Error starting Photo Picker:", error);
       Alert.alert("Error", "Failed to start Photo Picker");
     } finally {
       setPhotoPickerLoading(false);
-    }
-  };
-
-  const fetchSelectedPhotos = async () => {
-    if (!photoPickerSessionId) {
-      Alert.alert("No Session", "Please open the Photo Picker first.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const data = await apiCall(`/api/photos/picker/media?sessionId=${photoPickerSessionId}&user_id=${userId}`);
-
-      if (data.photos && data.photos.length > 0) {
-        setGooglePhotos(data.photos);
-        Alert.alert("Success", `Loaded ${data.photos.length} photos from Google Photos!`);
-      } else {
-        Alert.alert("No Photos", "No photos were selected. Please try selecting photos in the picker first.");
-      }
-    } catch (error) {
-      console.error("Error fetching selected photos:", error);
-      if (error.message.includes("user has not picked media items")) {
-        Alert.alert("No Photos Selected", "Please select photos in the Photo Picker first, then click 'Fetch Selected Photos'.");
-      } else {
-        Alert.alert("Error", "Failed to fetch selected photos. Please try again.");
-      }
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -669,8 +655,9 @@ export default function App() {
             <View style={styles.debugContainer}>
               <Text style={styles.debugTitle}>🔍 Debug Info:</Text>
               <Text style={styles.debugText}>Current API URL: {currentApiUrl || 'None'}</Text>
-              <Text style={styles.debugText}>OAuth Session ID: {oauthSessionId || 'None'}</Text>
+              <Text style={styles.debugText}>Session ID: {sessionId || 'None'}</Text>
               <Text style={styles.debugText}>Access Token: {accessToken ? 'Present' : 'None'}</Text>
+              <Text style={styles.debugText}>Profile: {profile ? 'Loaded' : 'None'}</Text>
             </View>
           </View>
         ) : (
@@ -684,6 +671,12 @@ export default function App() {
                 </Text>
                 <Text style={styles.profileText}>
                   <Text style={styles.bold}>Email:</Text> {profile.emailAddresses?.[0]?.value || "N/A"}
+                </Text>
+                <Text style={styles.profileText}>
+                  <Text style={styles.bold}>Session ID:</Text> {sessionId || "N/A"}
+                </Text>
+                <Text style={styles.profileText}>
+                  <Text style={styles.bold}>Access Token:</Text> {accessToken ? "Present" : "N/A"}
                 </Text>
                 <TouchableOpacity style={styles.logoutButton} onPress={logout}>
                   <Text style={styles.logoutButtonText}>Sign Out</Text>
