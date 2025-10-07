@@ -39,6 +39,7 @@ function AppSecure() {
   const [selectedPhotos, setSelectedPhotos] = useState([]);
   const [googlePhotos, setGooglePhotos] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
 
   useEffect(() => {
     // Check if we have a stored access token
@@ -70,6 +71,28 @@ function AppSecure() {
     }
 
     return await response.json();
+  };
+
+  // Helper function to fetch authenticated image data
+  const fetchAuthenticatedImage = async (imageUrl) => {
+    try {
+      const response = await fetch(imageUrl, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      } else {
+        console.error(`Failed to fetch image: ${response.status}`);
+        return null;
+      }
+    } catch (error) {
+      console.error("Error fetching authenticated image:", error);
+      return null;
+    }
   };
 
   const fetchProfile = async () => {
@@ -172,7 +195,7 @@ function AppSecure() {
     if (!accessToken) return;
 
     try {
-      setLoading(true);
+      setPhotoPickerLoading(true);
 
       // Create Photo Picker session
       const session = await apiCall("/api/photos/picker/session", {
@@ -197,15 +220,46 @@ function AppSecure() {
           setTimeout(async () => {
             try {
               const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
-              setGooglePhotos(data.photos);
-              if (data.photos.length > 0) {
-                alert(`Successfully loaded ${data.photos.length} photos from Google Photos!`);
+              
+              // Transform the data to match App.js format
+              const photos = [];
+              
+              for (const item of data.mediaItems || []) {
+                const baseUrl = item.mediaFile?.baseUrl;
+
+                if (baseUrl) {
+                  // Fetch authenticated thumbnail
+                  const thumbnailUrl = baseUrl + "=w200-h200";
+                  const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+                  const photo = {
+                    id: item.id,
+                    name: item.mediaFile?.filename || `Photo ${item.id}`,
+                    url: baseUrl,
+                    thumbnails: [
+                      {
+                        url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                      },
+                    ],
+                    mimeType: item.mediaFile?.mimeType,
+                    creationTime: item.createTime,
+                    width: item.mediaFile?.mediaFileMetadata?.width,
+                    height: item.mediaFile?.mediaFileMetadata?.height,
+                  };
+                  photos.push(photo);
+                }
+              }
+              
+              setGooglePhotos(photos);
+              if (photos.length > 0) {
+                alert(`Successfully loaded ${photos.length} photos from Google Photos!`);
               } else {
                 alert("No photos were selected. Please try again and make sure to click 'Done' in the picker.");
               }
             } catch (error) {
               console.error("Error fetching selected photos:", error);
-              alert("Failed to fetch selected photos");
+              // Don't show alert for Photo Picker errors - just log them
+              console.log("Photo Picker error (non-critical):", error.message);
             }
           }, 3000); // Wait 3 seconds for session to update
         }
@@ -216,7 +270,37 @@ function AppSecure() {
         clearInterval(checkPickerStatus);
         try {
           const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
-          setGooglePhotos(data.photos);
+          
+          // Transform the data to match App.js format
+          const photos = [];
+          
+          for (const item of data.mediaItems || []) {
+            const baseUrl = item.mediaFile?.baseUrl;
+
+            if (baseUrl) {
+              // Fetch authenticated thumbnail
+              const thumbnailUrl = baseUrl + "=w200-h200";
+              const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+              const photo = {
+                id: item.id,
+                name: item.mediaFile?.filename || `Photo ${item.id}`,
+                url: baseUrl,
+                thumbnails: [
+                  {
+                    url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                  },
+                ],
+                mimeType: item.mediaFile?.mimeType,
+                creationTime: item.createTime,
+                width: item.mediaFile?.mediaFileMetadata?.width,
+                height: item.mediaFile?.mediaFileMetadata?.height,
+              };
+              photos.push(photo);
+            }
+          }
+          
+          setGooglePhotos(photos);
         } catch (error) {
           console.error("Error fetching selected photos:", error);
         }
@@ -225,7 +309,7 @@ function AppSecure() {
       console.error("Error opening Photo Picker:", error);
       alert(`Error opening Photo Picker: ${error.message}`);
     } finally {
-      setLoading(false);
+      setPhotoPickerLoading(false);
     }
   };
 
@@ -504,16 +588,17 @@ function AppSecure() {
                 </button>
                 <button
                   onClick={openPhotoPicker}
+                  disabled={photoPickerLoading}
                   style={{
                     padding: "0.5rem 1rem",
-                    backgroundColor: "#4285F4",
+                    backgroundColor: photoPickerLoading ? "#ccc" : "#4285F4",
                     color: "white",
                     border: "none",
                     borderRadius: "4px",
-                    cursor: "pointer",
+                    cursor: photoPickerLoading ? "not-allowed" : "pointer",
                   }}
                 >
-                  Open Google Photo Picker
+                  {photoPickerLoading ? "⏳ Loading Photo Picker..." : "Open Google Photo Picker"}
                 </button>
               </div>
 
@@ -658,6 +743,12 @@ function AppSecure() {
             )}
 
             {/* Google Photos Results */}
+            {photoPickerLoading && (
+              <div style={{ marginBottom: "2rem", border: "1px solid #4285F4", padding: "1rem", borderRadius: "8px", backgroundColor: "#f8f9ff", textAlign: "center" }}>
+                <h3 style={{ color: "#4285F4", marginTop: 0 }}>⏳ Loading Photos...</h3>
+                <p>Please wait while we fetch your selected photos from Google Photos.</p>
+              </div>
+            )}
             {googlePhotos && googlePhotos.length > 0 && (
               <div style={{ marginBottom: "2rem", border: "1px solid #4285F4", padding: "1rem", borderRadius: "8px", backgroundColor: "#f8f9ff" }}>
                 <h3 style={{ color: "#4285F4", marginTop: 0 }}>Google Photos Library ({googlePhotos.length})</h3>
@@ -672,19 +763,19 @@ function AppSecure() {
                         backgroundColor: "white",
                       }}
                     >
-                      <img
-                        src={photo.thumbnails?.[0]?.url || photo.url}
-                        alt={photo.name || `Photo ${index + 1}`}
-                        style={{
-                          width: "100%",
-                          height: "150px",
-                          objectFit: "cover",
-                        }}
-                      />
+                       <img
+                         src={photo.thumbnails?.[0]?.url || photo.url}
+                         alt={photo.name || `Photo ${index + 1}`}
+                         style={{
+                           width: "100%",
+                           height: "150px",
+                           objectFit: "cover",
+                         }}
+                       />
                       <div style={{ padding: "0.5rem" }}>
                         <div style={{ fontSize: "12px", color: "#666", marginBottom: "0.25rem" }}>{photo.name || `Photo ${index + 1}`}</div>
                         <div style={{ fontSize: "11px", color: "#999" }}>{photo.width && photo.height ? `📐 ${photo.width}x${photo.height}` : "🖼️ Image"}</div>
-                        {photo.creationTime && <div style={{ fontSize: "10px", color: "#999" }}>📅 {formatDate(photo.creationTime)}</div>}
+                        {photo.creationTime && <div style={{ fontSize: "10px", color: "#999" }}>📅 {new Date(photo.creationTime).toLocaleDateString()}</div>}
                       </div>
                     </div>
                   ))}
