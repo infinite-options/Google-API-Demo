@@ -126,6 +126,28 @@ export default function App() {
     };
   }, []);
 
+  // Helper function to fetch authenticated image data
+  const fetchAuthenticatedImage = async (imageUrl) => {
+    try {
+      const response = await fetch(imageUrl, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      } else {
+        console.error(`Failed to fetch image: ${response.status}`);
+        return null;
+      }
+    } catch (error) {
+      console.error("Error fetching authenticated image:", error);
+      return null;
+    }
+  };
+
   // Fetch tokens and profile from backend
   const fetchTokensAndProfile = async (sessionId) => {
     try {
@@ -163,8 +185,34 @@ export default function App() {
         },
       });
       
-      // Handle both response formats
-      const photos = response.photos || response.mediaItems || [];
+      // Transform the data to match React web app format
+      const photos = [];
+      
+              for (const item of response.mediaItems || []) {
+                const baseUrl = item.mediaFile?.baseUrl;
+
+                if (baseUrl) {
+                  // Fetch authenticated thumbnail
+                  const thumbnailUrl = baseUrl + "=w200-h200";
+                  const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+                  const photo = {
+                    id: item.id,
+                    name: item.mediaFile?.filename || `Photo ${item.id}`,
+                    url: baseUrl,
+                    thumbnails: [
+                      {
+                        url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                      },
+                    ],
+                    mimeType: item.mediaFile?.mimeType,
+                    creationTime: item.createTime,
+                    width: item.mediaFile?.mediaFileMetadata?.width,
+                    height: item.mediaFile?.mediaFileMetadata?.height,
+                  };
+                  photos.push(photo);
+                }
+              }
       
       if (photos.length > 0) {
         console.log('✅ Photo picker results received:', photos.length, 'photos');
@@ -499,8 +547,34 @@ export default function App() {
             try {
               const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
               
-              // Handle both response formats
-              const photos = data.photos || data.mediaItems || [];
+              // Transform the data to match React web app format
+              const photos = [];
+              
+              for (const item of data.mediaItems || []) {
+                const baseUrl = item.mediaFile?.baseUrl;
+
+                if (baseUrl) {
+                  // Fetch authenticated thumbnail
+                  const thumbnailUrl = baseUrl + "=w200-h200";
+                  const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+                  const photo = {
+                    id: item.id,
+                    name: item.mediaFile?.filename || `Photo ${item.id}`,
+                    url: baseUrl,
+                    thumbnails: [
+                      {
+                        url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                      },
+                    ],
+                    mimeType: item.mediaFile?.mimeType,
+                    creationTime: item.createTime,
+                    width: item.mediaFile?.mediaFileMetadata?.width,
+                    height: item.mediaFile?.mediaFileMetadata?.height,
+                  };
+                  photos.push(photo);
+                }
+              }
               
               if (photos.length > 0) {
                 console.log('✅ Photo picker results received:', photos.length, 'photos');
@@ -524,8 +598,34 @@ export default function App() {
         try {
           const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
           
-          // Handle both response formats
-          const photos = data.photos || data.mediaItems || [];
+          // Transform the data to match React web app format
+          const photos = [];
+          
+          for (const item of data.mediaItems || []) {
+            const baseUrl = item.mediaFile?.baseUrl;
+
+            if (baseUrl) {
+              // Fetch authenticated thumbnail
+              const thumbnailUrl = baseUrl + "=w200-h200";
+              const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+              const photo = {
+                id: item.id,
+                name: item.mediaFile?.filename || `Photo ${item.id}`,
+                url: baseUrl,
+                thumbnails: [
+                  {
+                    url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                  },
+                ],
+                mimeType: item.mediaFile?.mimeType,
+                creationTime: item.createTime,
+                width: item.mediaFile?.mediaFileMetadata?.width,
+                height: item.mediaFile?.mediaFileMetadata?.height,
+              };
+              photos.push(photo);
+            }
+          }
           
           if (photos.length > 0) {
             console.log('✅ Photo picker results received:', photos.length, 'photos');
