@@ -8,33 +8,24 @@ import axios from "axios";
 // Configuration
 let API_BASE_URL = "";
 
-// API Endpoints
-const LOCAL_API_URL = Platform.OS === "android" ? "http://10.0.2.2:4030" : "http://localhost:4030";
-const LIVE_API_URL = "https://bmarz6chil.execute-api.us-west-1.amazonaws.com/dev";
+// Use AWS API Gateway for all platforms
+const AWS_API_URL = "https://bmarz6chil.execute-api.us-west-1.amazonaws.com/dev";
 
-// Platform-specific API URL configuration
-if (__DEV__) {
-if (Platform.OS === "ios") {
-  API_BASE_URL = LOCAL_API_URL; // iOS simulator maps localhost → your machine
-} else if (Platform.OS === "android") {
-  API_BASE_URL = LOCAL_API_URL; // Android emulator special alias
-} else if (Platform.OS === "web") {
-  API_BASE_URL = LOCAL_API_URL; // Web platform uses localhost
-} else {
-    // For physical devices, use your machine's LAN IP
-    API_BASE_URL = "http://192.168.1.100:4030"; // Replace with your actual LAN IP
-  }
-} else {
-  // For production (point to deployed backend)
-  API_BASE_URL = LIVE_API_URL;
-}
+// Set API_BASE_URL to AWS for all platforms
+API_BASE_URL = AWS_API_URL;
 
 console.log(`Platform: ${Platform.OS}, API_BASE_URL: ${API_BASE_URL}`);
+console.log(`🚀 App Build Time: ${new Date().toLocaleString()}`);
 
 const { width } = Dimensions.get("window");
 const PHOTO_SIZE = (width - 60) / 3;
 
 export default function App() {
+  // Component render timestamp and version
+  const componentRenderTime = new Date().toLocaleString();
+  const appVersion = "v2.0.0"; // AWS API Gateway integration
+  console.log(`🔄 Component rendered at: ${componentRenderTime} (${appVersion})`);
+  
   const [profile, setProfile] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -126,6 +117,16 @@ export default function App() {
     };
   }, []);
 
+  // Helper function to get OAuth URL with platform parameter
+  const getOAuthUrl = async (baseUrl) => {
+    // Force platform to 'android' for testing if Platform.OS is not working
+    const platformParam = Platform.OS || 'android'; // Fallback to 'android' for testing
+    const endpoint = `/api/oauth/url?platform=${platformParam}`;
+    
+    const response = await apiCallWithUrl(baseUrl, endpoint);
+    return response;
+  };
+
   // Helper function to fetch authenticated image data
   const fetchAuthenticatedImage = async (imageUrl) => {
     try {
@@ -179,12 +180,12 @@ export default function App() {
     try {
       console.log('📸 Fetching picker result for session:', session);
       const response = await apiCall(`/api/photos/picker/media?sessionId=${encodeURIComponent(session)}`, {
-        headers: {
+            headers: {
           // Use the explicitAccessToken if provided, otherwise fall back to state
           ...(explicitAccessToken && { Authorization: `Bearer ${explicitAccessToken}` }),
-        },
-      });
-      
+            },
+          });
+
       // Transform the data to match React web app format
       const photos = [];
       
@@ -281,6 +282,7 @@ export default function App() {
 
   const apiCallWithUrl = async (baseUrl, endpoint, options = {}) => {
     const url = `${baseUrl}${endpoint}`;
+    
     const config = {
       ...options,
       headers: {
@@ -296,20 +298,24 @@ export default function App() {
     }
 
     try {
-      console.log(`Making API call to: ${url}`, config);
+      console.log(`🌐 Making API call to: ${url}`);
+      console.log(`🌐 Config:`, config);
       const response = await fetch(url, config);
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        console.error(`❌ API Error ${response.status}:`, errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
-      console.log(`Response status: ${response.status}`);
-      console.log("API Success:", data);
+      console.log(`✅ Response status: ${response.status}`);
+      console.log("✅ API Success:", data);
       return data;
     } catch (error) {
-      console.error("API Error:", error.message);
-      throw new Error(error.message);
+      console.error("❌ Network Error:", error.message);
+      console.error("❌ Full error:", error);
+      throw new Error(`Network request failed: ${error.message}`);
     }
   };
 
@@ -318,12 +324,12 @@ export default function App() {
       setLoading(true);
       setApiError(null);
       setApiResponse(null);
-      setCurrentApiUrl(LOCAL_API_URL);
-      console.log("🔐 Starting LOCAL OAuth flow...");
+      console.log("🔐 Starting AWS OAuth flow...");
 
-      // Get OAuth URL from local backend
-      const response = await apiCallWithUrl(LOCAL_API_URL, "/api/oauth/url");
-      console.log("🔗 LOCAL OAuth URL received:", JSON.stringify(response, null, 2));
+      // Get OAuth URL from AWS API Gateway with platform parameter
+      setCurrentApiUrl(AWS_API_URL);
+      const response = await getOAuthUrl(AWS_API_URL);
+      console.log("🔗 AWS OAuth URL received:", JSON.stringify(response, null, 2));
       
       setApiResponse(response);
       
@@ -340,22 +346,22 @@ export default function App() {
       }
 
       // For mobile platforms, open in external browser
-      console.log("🌐 Opening LOCAL OAuth URL in external browser...");
+      console.log("🌐 Opening AWS OAuth URL in external browser...");
       const supported = await Linking.canOpenURL(authUrl);
       
       if (supported) {
         await Linking.openURL(authUrl);
         Alert.alert(
-          "Local OAuth Started", 
+          "AWS OAuth Started", 
           "Please complete the authentication in your browser, then return to this app."
         );
       } else {
         Alert.alert("Error", "Cannot open OAuth URL");
       }
     } catch (error) {
-      console.error("Local login error:", error);
+      console.error("AWS login error:", error);
       setApiError(error.message);
-      Alert.alert("Error", `Local login failed: ${error.message}`);
+      Alert.alert("Error", `AWS login failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -366,12 +372,12 @@ export default function App() {
       setLoading(true);
       setApiError(null);
       setApiResponse(null);
-      setCurrentApiUrl(LIVE_API_URL);
-      console.log("🔐 Starting LIVE OAuth flow...");
+      setCurrentApiUrl(AWS_API_URL);
+      console.log("🔐 Starting AWS OAuth flow...");
 
-      // Get OAuth URL from live backend
-      const response = await apiCallWithUrl(LIVE_API_URL, "/api/oauth/url");
-      console.log("🔗 LIVE OAuth URL received:", JSON.stringify(response, null, 2));
+      // Get OAuth URL from AWS API Gateway with platform parameter
+      const response = await getOAuthUrl(AWS_API_URL);
+      console.log("🔗 AWS OAuth URL received:", JSON.stringify(response, null, 2));
       
       setApiResponse(response);
       
@@ -388,22 +394,22 @@ export default function App() {
       }
 
       // For mobile platforms, open in external browser
-      console.log("🌐 Opening LIVE OAuth URL in external browser...");
+      console.log("🌐 Opening AWS OAuth URL in external browser...");
       const supported = await Linking.canOpenURL(authUrl);
       
       if (supported) {
         await Linking.openURL(authUrl);
         Alert.alert(
-          "Live OAuth Started", 
+          "AWS OAuth Started", 
           "Please complete the authentication in your browser, then return to this app."
         );
       } else {
         Alert.alert("Error", "Cannot open OAuth URL");
       }
     } catch (error) {
-      console.error("Live login error:", error);
+      console.error("AWS login error:", error);
       setApiError(error.message);
-      Alert.alert("Error", `Live login failed: ${error.message}`);
+      Alert.alert("Error", `AWS login failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -415,11 +421,11 @@ export default function App() {
       setLoading(true);
       setApiError(null);
       setApiResponse(null);
-      setCurrentApiUrl(LIVE_API_URL);
+      setCurrentApiUrl(AWS_API_URL);
       console.log("📸 Starting Photo Picker Flow...");
 
-      // Get OAuth URL from backend with Web Client ID and Backend Callback
-      const response = await apiCallWithUrl(LIVE_API_URL, "/api/oauth/url");
+      // Get OAuth URL from AWS API Gateway with platform parameter
+      const response = await getOAuthUrl(AWS_API_URL);
       console.log("🔗 Photo Picker OAuth URL received:", JSON.stringify(response, null, 2));
       
       setApiResponse(response);
@@ -436,7 +442,7 @@ export default function App() {
       if (supported) {
         await Linking.openURL(authUrl);
         Alert.alert(
-          "Photo Picker Flow Started", 
+          "AWS Photo Picker Flow Started", 
           "Please complete authentication in your browser. You'll be redirected to the photo picker, then back to this app."
         );
       } else {
@@ -580,11 +586,11 @@ export default function App() {
                 console.log('✅ Photo picker results received:', photos.length, 'photos');
                 setGooglePhotos(photos);
                 Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
-              } else {
+      } else {
                 console.log('❌ No selection found for session:', session.id);
                 Alert.alert("No Photos", "No photos were selected in the picker");
-              }
-            } catch (error) {
+      }
+    } catch (error) {
               console.error('❌ Failed to fetch picker result:', error);
               Alert.alert("Error", "Failed to fetch selected photos");
             }
@@ -631,11 +637,11 @@ export default function App() {
             console.log('✅ Photo picker results received:', photos.length, 'photos');
             setGooglePhotos(photos);
             Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
-          } else {
+      } else {
             console.log('❌ No selection found for session:', session.id);
             Alert.alert("No Photos", "No photos were selected in the picker");
-          }
-        } catch (error) {
+      }
+    } catch (error) {
           console.error('❌ Failed to fetch picker result:', error);
           Alert.alert("Error", "Failed to fetch selected photos");
         }
@@ -705,7 +711,7 @@ export default function App() {
               disabled={loading}
             >
               <Text style={styles.loginButtonText}>
-                {loading ? "Signing in..." : "Sign In Local Host"}
+                {loading ? "Signing in..." : "Sign In AWS"}
               </Text>
             </TouchableOpacity>
 
@@ -716,7 +722,7 @@ export default function App() {
               disabled={loading}
             >
               <Text style={styles.loginButtonText}>
-                {loading ? "Signing in..." : "Sign In Live Server"}
+                {loading ? "Signing in..." : "Sign In AWS (Alt)"}
               </Text>
             </TouchableOpacity>
 
@@ -755,6 +761,10 @@ export default function App() {
             <View style={styles.debugContainer}>
               <Text style={styles.debugTitle}>🔍 Debug Info:</Text>
               <Text style={styles.debugText}>Current API URL: {currentApiUrl || 'None'}</Text>
+              <Text style={styles.debugText}>Platform: {Platform.OS || 'UNDEFINED'}</Text>
+              <Text style={styles.debugText}>Platform Type: {typeof Platform.OS}</Text>
+              <Text style={styles.debugText}>Build Time: {componentRenderTime}</Text>
+              <Text style={styles.debugText}>Version: {appVersion}</Text>
               <Text style={styles.debugText}>Session ID: {sessionId || 'None'}</Text>
               <Text style={styles.debugText}>Access Token: {accessToken ? 'Present' : 'None'}</Text>
               <Text style={styles.debugText}>Profile: {profile ? 'Loaded' : 'None'}</Text>
