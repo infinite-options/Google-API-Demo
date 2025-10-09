@@ -563,114 +563,17 @@ export default function App() {
     }
   };
 
-  const loginLocal = async () => {
-    try {
-      setLoading(true);
-      setApiError(null);
-      setApiResponse(null);
-      console.log("🔐 Starting AWS OAuth flow...");
-
-      // Get OAuth URL from AWS API Gateway with platform parameter
-      setCurrentApiUrl(AWS_API_URL);
-      const response = await getOAuthUrl(AWS_API_URL);
-      console.log("🔗 AWS OAuth URL received:", JSON.stringify(response, null, 2));
-      
-      setApiResponse(response);
-      
-      const { authUrl, sessionId } = response;
-      
-      // Store session ID for later use
-      setSessionId(sessionId);
-
-      // For web platform, use direct window redirect
-      if (Platform.OS === "web") {
-        // Redirect to Google OAuth
-        window.location.href = authUrl;
-        return;
-      }
-
-      // For mobile platforms, open in external browser
-      console.log("🌐 Opening AWS OAuth URL in external browser...");
-      const supported = await Linking.canOpenURL(authUrl);
-      
-      if (supported) {
-        await Linking.openURL(authUrl);
-        Alert.alert(
-          "AWS OAuth Started", 
-          "Please complete the authentication in your browser, then return to this app."
-        );
-      } else {
-        Alert.alert("Error", "Cannot open OAuth URL");
-      }
-    } catch (error) {
-      console.error("AWS login error:", error);
-      setApiError(error.message);
-      Alert.alert("Error", `AWS login failed: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loginLive = async () => {
+  const loginGoogle = async () => {
     try {
       setLoading(true);
       setApiError(null);
       setApiResponse(null);
       setCurrentApiUrl(AWS_API_URL);
-      console.log("🔐 Starting AWS OAuth flow...");
+      console.log("🔐 Starting Google OAuth flow...");
 
       // Get OAuth URL from AWS API Gateway with platform parameter
       const response = await getOAuthUrl(AWS_API_URL);
-      console.log("🔗 AWS OAuth URL received:", JSON.stringify(response, null, 2));
-      
-      setApiResponse(response);
-      
-      const { authUrl, sessionId } = response;
-      
-      // Store session ID for later use
-      setSessionId(sessionId);
-
-      // For web platform, use direct window redirect
-      if (Platform.OS === "web") {
-        // Redirect to Google OAuth
-        window.location.href = authUrl;
-        return;
-      }
-
-      // For mobile platforms, open in external browser
-      console.log("🌐 Opening AWS OAuth URL in external browser...");
-      const supported = await Linking.canOpenURL(authUrl);
-      
-      if (supported) {
-        await Linking.openURL(authUrl);
-        Alert.alert(
-          "AWS OAuth Started", 
-          "Please complete the authentication in your browser, then return to this app."
-        );
-      } else {
-        Alert.alert("Error", "Cannot open OAuth URL");
-      }
-    } catch (error) {
-      console.error("AWS login error:", error);
-      setApiError(error.message);
-      Alert.alert("Error", `AWS login failed: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // New function for your desired flow: Photo Picker Flow
-  const startPhotoPickerFlow = async () => {
-    try {
-      setLoading(true);
-      setApiError(null);
-      setApiResponse(null);
-      setCurrentApiUrl(AWS_API_URL);
-      console.log("📸 Starting Photo Picker Flow...");
-
-      // Get OAuth URL from AWS API Gateway with platform parameter
-      const response = await getOAuthUrl(AWS_API_URL);
-      console.log("🔗 Photo Picker OAuth URL received:", JSON.stringify(response, null, 2));
+      console.log("🔗 Google OAuth URL received:", JSON.stringify(response, null, 2));
       
       setApiResponse(response);
       
@@ -682,23 +585,30 @@ export default function App() {
       // Save session ID to AsyncStorage before opening OAuth URL
       await savePendingSession(sessionId);
 
-      // Open OAuth URL in browser
-      console.log("🌐 Opening OAuth URL in browser...");
+      // For web platform, use direct window redirect
+      if (Platform.OS === "web") {
+        // Redirect to Google OAuth
+        window.location.href = authUrl;
+        return;
+      }
+
+      // For mobile platforms, open in external browser
+      console.log("🌐 Opening Google OAuth URL in external browser...");
       const supported = await Linking.canOpenURL(authUrl);
       
       if (supported) {
         await Linking.openURL(authUrl);
         Alert.alert(
-          "AWS Photo Picker Flow Started", 
-          "Please complete authentication in your browser. You'll be redirected to the photo picker, then back to this app."
+          "Google Sign In Started", 
+          "Please complete authentication in your browser, then return to this app."
         );
       } else {
         Alert.alert("Error", "Cannot open OAuth URL");
       }
     } catch (error) {
-      console.error("Photo Picker Flow error:", error);
+      console.error("Google login error:", error);
       setApiError(error.message);
-      Alert.alert("Error", `Photo Picker Flow failed: ${error.message}`);
+      Alert.alert("Error", `Google login failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -980,36 +890,14 @@ export default function App() {
 
         {!(sessionId && (accessToken || debugAccessToken)) ? (
           <View>
-            {/* Local Host Button */}
+            {/* Google Sign In Button */}
             <TouchableOpacity 
-              style={[styles.loginButton, { backgroundColor: "#007bff", marginBottom: 8 }]} 
-              onPress={loginLocal} 
+              style={[styles.loginButton, { backgroundColor: "#4285F4" }]} 
+              onPress={loginGoogle} 
               disabled={loading}
             >
               <Text style={styles.loginButtonText}>
-                {loading ? "Signing in..." : "Sign In AWS"}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Live Server Button */}
-            <TouchableOpacity 
-              style={[styles.loginButton, { backgroundColor: "#28a745" }]} 
-              onPress={loginLive} 
-              disabled={loading}
-            >
-              <Text style={styles.loginButtonText}>
-                {loading ? "Signing in..." : "Sign In AWS (Alt)"}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Photo Picker Flow Button (Your Desired Flow) */}
-            <TouchableOpacity 
-              style={[styles.loginButton, { backgroundColor: "#6f42c1" }]} 
-              onPress={startPhotoPickerFlow} 
-              disabled={loading}
-            >
-              <Text style={styles.loginButtonText}>
-                {loading ? "Starting..." : "Photo Picker Flow"}
+                {loading ? "Signing in..." : "Sign In Google"}
               </Text>
             </TouchableOpacity>
 
