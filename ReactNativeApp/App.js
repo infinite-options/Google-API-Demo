@@ -44,7 +44,6 @@ export default function App() {
   const [currentApiUrl, setCurrentApiUrl] = useState(null);
   const [showWebView, setShowWebView] = useState(false);
   const [webViewUrl, setWebViewUrl] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [debugAccessToken, setDebugAccessToken] = useState(null);
 
   // AsyncStorage functions for session persistence
@@ -85,8 +84,7 @@ export default function App() {
       console.log('💾 AccessToken:', accessToken ? 'Present' : 'None');
       console.log('💾 Profile:', profileStr ? 'Present' : 'None');
       
-      // if (sessionId) {
-      if (sessionId && debugAccessToken) {
+      if (sessionId && accessToken) {
         console.log('💾 ✅ Found complete auth state, restoring...');
         
         setSessionId(sessionId);
@@ -94,7 +92,6 @@ export default function App() {
         if (profileStr) {
           setProfile(JSON.parse(profileStr));
         }
-        setIsAuthenticated(true);
         
         console.log('💾 ✅ Auth state restored successfully!');
         return true;
@@ -153,6 +150,15 @@ export default function App() {
         console.log('🔄 ✅ Pending session completed successfully');
       } catch (error) {
         console.error('🔄 ❌ Failed to complete pending session:', error);
+        // Clear invalid session data
+        setSessionId(null);
+        setAccessToken(null);
+        setProfile(null);
+        // Clear from AsyncStorage
+        await AsyncStorage.removeItem('authSessionId');
+        await AsyncStorage.removeItem('authAccessToken');
+        await AsyncStorage.removeItem('authProfile');
+        console.log('🔄 ✅ Cleared invalid session data');
       }
     } else {
       console.log('🔄 No pending session found');
@@ -166,7 +172,7 @@ export default function App() {
       console.log('🔗 ===== DEEP LINK HANDLER CALLED =====');
       console.log('🔗 Deep link URL received:', url);
       console.log('🔗 Deep link timestamp:', new Date().toLocaleString());
-      console.log('🔗 Current authentication state:', isAuthenticated);
+      console.log('🔗 Current authentication state:', (sessionId && (accessToken || debugAccessToken)) ? 'AUTHENTICATED' : 'NOT AUTHENTICATED');
       console.log('🔗 Current sessionId:', sessionId);
       console.log('🔗 Current accessToken:', accessToken ? 'Present' : 'None');
       
@@ -256,7 +262,7 @@ export default function App() {
     console.log('🔗 Setting up deep link listeners...');
     console.log('🔗 Platform:', Platform.OS);
     console.log('🔗 Current time:', new Date().toLocaleString());
-    console.log('🔗 App state on startup:', isAuthenticated ? 'AUTHENTICATED' : 'NOT AUTHENTICATED');
+    console.log('🔗 App state on startup:', (sessionId && (accessToken || debugAccessToken)) ? 'AUTHENTICATED' : 'NOT AUTHENTICATED');
     console.log('🔗 Session ID on startup:', sessionId);
     console.log('🔗 ===== APP STARTUP/RESTART =====');
 
@@ -302,7 +308,6 @@ export default function App() {
         // Check if we have both Session ID and Stored Access Token - if so, authenticate
         if (sessionId && storedAccessToken) {
           console.log('🔍 Both Session ID and Stored Access Token present - setting authenticated to true');
-          setIsAuthenticated(true);
         }
         
         // Resume OAuth session after debug info is loaded
@@ -395,7 +400,6 @@ export default function App() {
       setProfile(profileData);
       
       console.log('🔑 ✅ Authentication completed successfully!');
-      setIsAuthenticated(true);
       
       // Save complete authentication state to AsyncStorage (same pattern as Session ID)
       await saveAuthState(sessionId, tokenData.access_token, profileData);
@@ -709,8 +713,7 @@ export default function App() {
     setCalendarEvents(null);
     setSelectedPhotos([]);
     setGooglePhotos([]);
-    setIsAuthenticated(false);
-    
+
     // Clear auth state from AsyncStorage (but keep Stored Access Token)
     try {
       await AsyncStorage.removeItem('authSessionId');
@@ -975,7 +978,7 @@ export default function App() {
           </Text>
         </View>
 
-        {!isAuthenticated ? (
+        {!(sessionId && (accessToken || debugAccessToken)) ? (
           <View>
             {/* Local Host Button */}
             <TouchableOpacity 
@@ -1045,7 +1048,7 @@ export default function App() {
               <Text style={styles.debugText}>Stored Access Token: {debugAccessToken ? 'Present' : 'None'}</Text>
               <Text style={styles.debugText}>Stored Access Token (last 10): {debugAccessToken ? '...' + debugAccessToken.substring(debugAccessToken.length - 10) : 'None'}</Text>
               <Text style={styles.debugText}>Profile: {profile ? 'Loaded' : 'None'}</Text>
-              <Text style={styles.debugText}>Authenticated: {isAuthenticated ? 'True' : 'False'}</Text>
+              <Text style={styles.debugText}>Authenticated: {(sessionId && (accessToken || debugAccessToken)) ? 'True' : 'False'}</Text>
             </View>
           </View>
         ) : (
@@ -1055,10 +1058,10 @@ export default function App() {
               <Text style={styles.sectionTitle}>Profile Information</Text>
               <View style={styles.profileCard}>
                 <Text style={styles.profileText}>
-                  <Text style={styles.bold}>Name:</Text> {profile.names?.[0]?.displayName || "N/A"}
+                  <Text style={styles.bold}>Name:</Text> {profile?.names?.[0]?.displayName || "N/A"}
                 </Text>
                 <Text style={styles.profileText}>
-                  <Text style={styles.bold}>Email:</Text> {profile.emailAddresses?.[0]?.value || "N/A"}
+                  <Text style={styles.bold}>Email:</Text> {profile?.emailAddresses?.[0]?.value || "N/A"}
                 </Text>
                 <Text style={styles.profileText}>
                   <Text style={styles.bold}>Session ID:</Text> {sessionId || "N/A"}
