@@ -215,7 +215,7 @@ const clearAsyncStorage = async () => {
   };
 
   // Deep linking handler function
-  const handleUrl = (event) => {
+    const handleUrl = (event) => {
       const { url } = event;
       console.log('🔗 ===== DEEP LINK HANDLER CALLED =====');
       console.log('🔗 Deep link URL received:', url);
@@ -481,14 +481,20 @@ const clearAsyncStorage = async () => {
   const fetchPickerResult = async (session, explicitAccessToken = null) => {
     try {
       console.log('📸 Fetching picker result for session:', session);
+      console.log('📸 Using accessToken:', accessToken ? 'Present' : 'None');
+      console.log('📸 Using explicitAccessToken:', explicitAccessToken ? 'Present' : 'None');
       setPhotoPickerLoading(true);
       
+      const tokenToUse = explicitAccessToken || accessToken;
+      console.log('📸 Final token being used:', tokenToUse ? 'Present' : 'None');
+      
       const response = await apiCall(`/api/photos/picker/media?sessionId=${encodeURIComponent(session)}`, {
-            headers: {
+        headers: {
           // Use the explicitAccessToken if provided, otherwise fall back to state
           ...(explicitAccessToken && { Authorization: `Bearer ${explicitAccessToken}` }),
-            },
-          });
+          ...(!explicitAccessToken && accessToken && { Authorization: `Bearer ${accessToken}` }),
+        },
+      });
 
       // Transform the data to match React web app format
       const photos = [];
@@ -843,11 +849,11 @@ const clearAsyncStorage = async () => {
                     console.log('✅ Photo picker results received:', photos.length, 'photos');
                     setGooglePhotos(photos);
                     Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
-          } else {
+      } else {
                     console.log('❌ No selection found for session:', session.id);
                     Alert.alert("No Photos", "No photos were selected in the picker");
-          }
-        } catch (error) {
+      }
+    } catch (error) {
                   console.error('❌ Failed to fetch picker result:', error);
                   Alert.alert("Error", "Failed to fetch selected photos");
                 }
@@ -922,11 +928,11 @@ const clearAsyncStorage = async () => {
                 "Photo Picker Opened", 
                 "Please select your photos in the browser, then return to this app and click 'Refresh Photos' to see your selections."
               );
-            } else {
+      } else {
               console.log("📱 URL not supported");
               Alert.alert("Error", "Cannot open Photo Picker URL");
-            }
-          } catch (error) {
+      }
+    } catch (error) {
             console.error("📱 Error opening Photo Picker:", error);
             Alert.alert("Error", `Failed to open Photo Picker: ${error.message}`);
           }
