@@ -100,44 +100,44 @@ export default function App() {
     
   };
 
-const printAuthState = async () => {
-  try {
-    const keys = await AsyncStorage.getAllKeys();
-    const items = await AsyncStorage.multiGet(keys);
+  const printAuthState = async () => {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const items = await AsyncStorage.multiGet(keys);
 
-    console.log('📦 AsyncStorage contents:');
-    items.forEach(([key, value]) => {
-      let displayValue = value;
-      try {
-        // Try to pretty-print JSON values
-        displayValue = JSON.stringify(JSON.parse(value), null, 2);
-      } catch {
-        // not JSON, keep as-is
+      console.log('📦 AsyncStorage contents:');
+      items.forEach(([key, value]) => {
+        let displayValue = value;
+        try {
+          // Try to pretty-print JSON values
+          displayValue = JSON.stringify(JSON.parse(value), null, 2);
+        } catch {
+          // not JSON, keep as-is
+        }
+        console.log(`🔑 ${key}:`, displayValue);
+      });
+
+      if (items.length === 0) {
+        console.log('🫙 AsyncStorage is empty.');
       }
-      console.log(`🔑 ${key}:`, displayValue);
-    });
-
-    if (items.length === 0) {
-      console.log('🫙 AsyncStorage is empty.');
+    } catch (error) {
+      console.error('❌ Error reading AsyncStorage:', error);
     }
-  } catch (error) {
-    console.error('❌ Error reading AsyncStorage:', error);
-  }
-};
+  };
 
-const clearAsyncStorage = async () => {
-  try {
-    await AsyncStorage.clear();
-    console.log('🧨 Cleared all AsyncStorage data');
-    Alert.alert("Success", "AsyncStorage cleared successfully!");
-  } catch (error) {
-    console.error('❌ Failed to clear AsyncStorage:', error);
-    Alert.alert("Error", `Failed to clear AsyncStorage: ${error.message}`);
-  }
-  console.log("--Clear Async Storage-------------------------------")
-  await printAuthState();
-  console.log("----------------------------------------------------")
-};
+  const clearAsyncStorage = async () => {
+    try {
+      await AsyncStorage.clear();
+      console.log('🧨 Cleared all AsyncStorage data');
+      Alert.alert("Success", "AsyncStorage cleared successfully!");
+    } catch (error) {
+      console.error('❌ Failed to clear AsyncStorage:', error);
+      Alert.alert("Error", `Failed to clear AsyncStorage: ${error.message}`);
+    }
+    console.log("--Clear Async Storage-------------------------------")
+    await printAuthState();
+    console.log("----------------------------------------------------")
+  };
 
   // Restore complete authentication state - SIMPLIFIED
   const restoreAuthState = async () => {
@@ -154,8 +154,10 @@ const clearAsyncStorage = async () => {
       if (sessionId && accessToken) {
         console.log('💾 ✅ Found complete auth state, restoring...');
         
+        // Set the state first
         setSessionId(sessionId);
         setAccessToken(accessToken);
+        // setDebugAccessToken(accessToken); // Keep debugAccessToken in sync
         if (profileStr) {
           setProfile(JSON.parse(profileStr));
         }
@@ -198,15 +200,18 @@ const clearAsyncStorage = async () => {
         console.log('🔄 ✅ Pending session completed successfully');
       } catch (error) {
         console.error('🔄 ❌ Failed to complete pending session:', error);
-        // Clear invalid session data
-        setSessionId(null);
+        console.log('🔄 ⚠️  Keeping session ID for Photo Picker retry...');
+        
+        // DON'T clear the session ID - keep it for Photo Picker retry
+        // Only clear tokens and profile, but keep sessionId
         setAccessToken(null);
+        setDebugAccessToken(null);
         setProfile(null);
-        // Clear from AsyncStorage
-        await AsyncStorage.removeItem('authSessionId');
+        
+        // Clear tokens from AsyncStorage but keep sessionId
         await AsyncStorage.removeItem('authAccessToken');
         await AsyncStorage.removeItem('authProfile');
-        console.log('🔄 ✅ Cleared invalid session data');
+        console.log('🔄 ✅ Cleared invalid tokens but kept session ID for retry');
       }
     } else {
       console.log('🔄 No pending session found');
@@ -215,7 +220,7 @@ const clearAsyncStorage = async () => {
   };
 
   // Deep linking handler function
-    const handleUrl = (event) => {
+  const handleUrl = (event) => {
       const { url } = event;
       console.log('🔗 ===== DEEP LINK HANDLER CALLED =====');
       console.log('🔗 Deep link URL received:', url);
@@ -812,9 +817,9 @@ const clearAsyncStorage = async () => {
               // Wait a bit for the session to be updated on Google's side
               setTimeout(async () => {
                 try {
-                  console.log("Before API Call--------------------------------")
+                  console.log("Before API Call----React Native Web----------------------------")
                   const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
-                  console.log("After API Call--------------------------------")
+                  console.log("After API Call----React Native Web----------------------------")
                   // Transform the data to match React web app format
                   const photos = [];
                   
@@ -865,8 +870,9 @@ const clearAsyncStorage = async () => {
           setTimeout(async () => {
             clearInterval(checkPickerStatus);
             try {
+              console.log("Before API Call----React Native Web (Fallback)----------------------------")
               const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
-              
+              console.log("After API Call----React Native Web (Fallback)----------------------------")
               // Transform the data to match React web app format
               const photos = [];
               
@@ -900,11 +906,11 @@ const clearAsyncStorage = async () => {
                 console.log('✅ Photo picker results received:', photos.length, 'photos');
                 setGooglePhotos(photos);
                 Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
-          } else {
+              } else {
                 console.log('❌ No selection found for session:', session.id);
                 Alert.alert("No Photos", "No photos were selected in the picker");
-          }
-        } catch (error) {
+              }
+            } catch (error) {
               console.error('❌ Failed to fetch picker result:', error);
               Alert.alert("Error", "Failed to fetch selected photos");
             }
@@ -926,7 +932,7 @@ const clearAsyncStorage = async () => {
               console.log("📱 URL opened successfully");
               Alert.alert(
                 "Photo Picker Opened", 
-                "Please select your photos in the browser, then return to this app and click 'Refresh Photos' to see your selections."
+                `Please select your photos in the browser, then return to this app and click 'Refresh Photos' to see your selections.\n\nSession ID: ${session.id}`
               );
       } else {
               console.log("📱 URL not supported");
