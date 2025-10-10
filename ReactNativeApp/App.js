@@ -79,17 +79,44 @@ export default function App() {
     }
   };
 
-  // Save complete authentication state - SIMPLIFIED
-  const saveAuthState = async (sessionId, accessToken, profile) => {
+
+  // Save complete authentication state - This is where new auth info is gathered
+  const savePreviousAuthState = async () => {
     try {
-      await AsyncStorage.setItem('authSessionId', sessionId);
+      // Save Previous Auth Info
+      const prevSessionId = await AsyncStorage.getItem('authSessionId');
+      const prevAccessToken = await AsyncStorage.getItem('authAccessToken');
+      const prevProfile = await AsyncStorage.getItem('authProfile');
+      console.log('💾 ✅ Saved PREVIOUS auth state to AsyncStorage');
+      console.log('💾 Previous SessionId:', prevSessionId);
+      console.log('💾 Previous AccessToken:', prevAccessToken);
+      console.log('💾 Previous Profile:', prevProfile);
+
+      await AsyncStorage.setItem('previousSessionId', prevSessionId);
+      await AsyncStorage.setItem('previousAccessToken', prevAccessToken);
+      await AsyncStorage.setItem('previousProfile', prevProfile);
+      console.log('💾 ✅ Saved previous values to AsyncStorage');
+      console.log('💾 previousSessionId saved:', prevSessionId);
+      console.log('💾 previousAccessToken saved:', prevAccessToken ? 'Present' : 'None');
+      console.log('💾 previousProfile saved:', prevProfile ? 'Present' : 'None');
+
+      // Save New Auth Info
+      // await AsyncStorage.setItem('authSessionId', sessionId);
       // await AsyncStorage.setItem('authAccessToken', accessToken);
-      await AsyncStorage.setItem('authAccessToken', accessToken);
-      await AsyncStorage.setItem('authProfile', JSON.stringify(profile));
-      console.log('💾 ✅ Saved complete auth state to AsyncStorage');
-      console.log('💾 SessionId:', sessionId);
-      console.log('💾 AccessToken:', accessToken ? 'Present' : 'None');
-      console.log('💾 Profile:', profile ? 'Present' : 'None');
+      // await AsyncStorage.setItem('authProfile', JSON.stringify(profile));
+      // console.log('💾 ✅ Saved CURRENT auth state to AsyncStorage');
+      // console.log('💾 SessionId:', sessionId);
+      // console.log('💾 AccessToken:', accessToken ? 'Present' : 'None');
+      // console.log('💾 Profile:', profile ? 'Present' : 'None');
+      
+      // Verify the previous values were actually saved
+      // const verifyPreviousSessionId = await AsyncStorage.getItem('previousSessionId');
+      // const verifyPreviousAccessToken = await AsyncStorage.getItem('previousAccessToken');
+      // const verifyPreviousProfile = await AsyncStorage.getItem('previousProfile');
+      // console.log('💾 🔍 VERIFICATION - Previous values in AsyncStorage:');
+      // console.log('💾 previousSessionId:', verifyPreviousSessionId);
+      // console.log('💾 previousAccessToken:', verifyPreviousAccessToken ? 'Present' : 'None');
+      // console.log('💾 previousProfile:', verifyPreviousProfile ? 'Present' : 'None');
     } catch (error) {
       console.error('💾 ❌ Failed to save auth state:', error);
     }
@@ -100,13 +127,98 @@ export default function App() {
     
   };
 
+  // Save complete authentication state - This is where new auth info is gathered
+  const saveAuthState = async (sessionId, accessToken, profile) => {
+    try {
+      // Save Previous Auth Info
+      // const prevSessionId = await AsyncStorage.getItem('authSessionId');
+      // const prevAccessToken = await AsyncStorage.getItem('authAccessToken');
+      // const prevProfile = await AsyncStorage.getItem('authProfile');
+      // console.log('💾 ✅ Saved PREVIOUS auth state to AsyncStorage');
+      // console.log('💾 Previous SessionId:', prevSessionId);
+      // console.log('💾 Previous AccessToken:', prevAccessToken);
+      // console.log('💾 Previous Profile:', prevProfile);
+
+      // await AsyncStorage.setItem('previousSessionId', prevSessionId);
+      // await AsyncStorage.setItem('previousAccessToken', prevAccessToken);
+      // await AsyncStorage.setItem('previousProfile', prevProfile);
+      
+      // console.log('💾 ✅ Saved previous values to AsyncStorage');
+      // console.log('💾 previousSessionId saved:', prevSessionId);
+      // console.log('💾 previousAccessToken saved:', prevAccessToken ? 'Present' : 'None');
+      // console.log('💾 previousProfile saved:', prevProfile ? 'Present' : 'None');
+
+      // Save New Auth Info
+      await AsyncStorage.setItem('authSessionId', sessionId);
+      await AsyncStorage.setItem('authAccessToken', accessToken);
+      await AsyncStorage.setItem('authProfile', JSON.stringify(profile));
+      console.log('💾 ✅ Saved CURRENT auth state to AsyncStorage');
+      console.log('💾 SessionId:', sessionId);
+      console.log('💾 AccessToken:', accessToken ? 'Present' : 'None');
+      console.log('💾 Profile:', profile ? 'Present' : 'None');
+      
+      // Verify the previous values were actually saved
+      // const verifyPreviousSessionId = await AsyncStorage.getItem('previousSessionId');
+      // const verifyPreviousAccessToken = await AsyncStorage.getItem('previousAccessToken');
+      // const verifyPreviousProfile = await AsyncStorage.getItem('previousProfile');
+      // console.log('💾 🔍 VERIFICATION - Previous values in AsyncStorage:');
+      // console.log('💾 previousSessionId:', verifyPreviousSessionId);
+      // console.log('💾 previousAccessToken:', verifyPreviousAccessToken ? 'Present' : 'None');
+      // console.log('💾 previousProfile:', verifyPreviousProfile ? 'Present' : 'None');
+    } catch (error) {
+      console.error('💾 ❌ Failed to save auth state:', error);
+    }
+
+    console.log("--Save Auth State-----------------------------------")
+    await printAuthState();
+    console.log("----------------------------------------------------")
+    
+  };
+
+  // const printAuthState = async () => {
+  //   try {
+  //     const keys = await AsyncStorage.getAllKeys();
+  //     const items = await AsyncStorage.multiGet(keys);
+
+  //     console.log('📦 AsyncStorage contents:');
+  //     items.forEach(([key, value]) => {
+  //       let displayValue = value;
+  //       try {
+  //         // Try to pretty-print JSON values
+  //         displayValue = JSON.stringify(JSON.parse(value), null, 2);
+  //       } catch {
+  //         // not JSON, keep as-is
+  //       }
+  //       console.log(`🔑 ${key}:`, displayValue);
+  //     });
+
+  //     if (items.length === 0) {
+  //       console.log('🫙 AsyncStorage is empty.');
+  //     }
+  //   } catch (error) {
+  //     console.error('❌ Error reading AsyncStorage:', error);
+  //   }
+  // };
+
+
+
+
   const printAuthState = async () => {
     try {
       const keys = await AsyncStorage.getAllKeys();
       const items = await AsyncStorage.multiGet(keys);
-
-      console.log('📦 AsyncStorage contents:');
-      items.forEach(([key, value]) => {
+  
+      // 🧱 Convert array of [key, value] pairs into an object
+      const allData = Object.fromEntries(items);
+  
+      // 🪣 Print everything as one combined object (raw, unformatted)
+      console.log('🧩 Full AsyncStorage object:', allData);
+  
+      // 📦 Sort keys alphabetically for better readability
+      const sortedItems = items.sort(([keyA], [keyB]) => keyA.localeCompare(keyB));
+      
+      console.log('📦 AsyncStorage contents (alphabetical order):');
+      sortedItems.forEach(([key, value]) => {
         let displayValue = value;
         try {
           // Try to pretty-print JSON values
@@ -116,7 +228,7 @@ export default function App() {
         }
         console.log(`🔑 ${key}:`, displayValue);
       });
-
+  
       if (items.length === 0) {
         console.log('🫙 AsyncStorage is empty.');
       }
@@ -124,6 +236,7 @@ export default function App() {
       console.error('❌ Error reading AsyncStorage:', error);
     }
   };
+  
 
   const clearAsyncStorage = async () => {
     try {
@@ -220,7 +333,7 @@ export default function App() {
   };
 
   // Deep linking handler function
-  const handleUrl = (event) => {
+    const handleUrl = (event) => {
       const { url } = event;
       console.log('🔗 ===== DEEP LINK HANDLER CALLED =====');
       console.log('🔗 Deep link URL received:', url);
@@ -494,12 +607,12 @@ export default function App() {
       console.log('📸 Final token being used:', tokenToUse ? 'Present' : 'None');
       
       const response = await apiCall(`/api/photos/picker/media?sessionId=${encodeURIComponent(session)}`, {
-        headers: {
+            headers: {
           // Use the explicitAccessToken if provided, otherwise fall back to state
           ...(explicitAccessToken && { Authorization: `Bearer ${explicitAccessToken}` }),
           ...(!explicitAccessToken && accessToken && { Authorization: `Bearer ${accessToken}` }),
-        },
-      });
+            },
+          });
 
       // Transform the data to match React web app format
       const photos = [];
@@ -632,6 +745,7 @@ export default function App() {
       setApiResponse(null);
       setCurrentApiUrl(AWS_API_URL);
       console.log("🔐 Starting Google OAuth flow...");
+      savePreviousAuthState();
 
       // Get OAuth URL from AWS API Gateway with platform parameter
       const response = await getOAuthUrl(AWS_API_URL);
