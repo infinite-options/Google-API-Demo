@@ -56,6 +56,29 @@ export default function App() {
     }
   };
 
+  const getPendingSession = async () => {
+    try {
+      const sessionId = await AsyncStorage.getItem('pendingSessionId');
+      if (sessionId) {
+        console.log('💾 Found pending session ID:', sessionId);
+        return sessionId;
+      }
+      return null;
+    } catch (error) {
+      console.error('❌ Failed to get pending session:', error);
+      return null;
+    }
+  };
+
+  const clearPendingSession = async () => {
+    try {
+      await AsyncStorage.removeItem('pendingSessionId');
+      console.log('💾 Cleared pending session ID');
+    } catch (error) {
+      console.error('❌ Failed to clear pending session:', error);
+    }
+  };
+
   // Save complete authentication state - SIMPLIFIED
   const saveAuthState = async (sessionId, accessToken, profile) => {
     try {
@@ -70,7 +93,51 @@ export default function App() {
     } catch (error) {
       console.error('💾 ❌ Failed to save auth state:', error);
     }
+
+    console.log("--Save Auth State-----------------------------------")
+    await printAuthState();
+    console.log("----------------------------------------------------")
+    
   };
+
+const printAuthState = async () => {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const items = await AsyncStorage.multiGet(keys);
+
+    console.log('📦 AsyncStorage contents:');
+    items.forEach(([key, value]) => {
+      let displayValue = value;
+      try {
+        // Try to pretty-print JSON values
+        displayValue = JSON.stringify(JSON.parse(value), null, 2);
+      } catch {
+        // not JSON, keep as-is
+      }
+      console.log(`🔑 ${key}:`, displayValue);
+    });
+
+    if (items.length === 0) {
+      console.log('🫙 AsyncStorage is empty.');
+    }
+  } catch (error) {
+    console.error('❌ Error reading AsyncStorage:', error);
+  }
+};
+
+const clearAsyncStorage = async () => {
+  try {
+    await AsyncStorage.clear();
+    console.log('🧨 Cleared all AsyncStorage data');
+    Alert.alert("Success", "AsyncStorage cleared successfully!");
+  } catch (error) {
+    console.error('❌ Failed to clear AsyncStorage:', error);
+    Alert.alert("Error", `Failed to clear AsyncStorage: ${error.message}`);
+  }
+  console.log("--Clear Async Storage-------------------------------")
+  await printAuthState();
+  console.log("----------------------------------------------------")
+};
 
   // Restore complete authentication state - SIMPLIFIED
   const restoreAuthState = async () => {
@@ -105,32 +172,13 @@ export default function App() {
     }
   };
 
-  const getPendingSession = async () => {
-    try {
-      const sessionId = await AsyncStorage.getItem('pendingSessionId');
-      if (sessionId) {
-        console.log('💾 Found pending session ID:', sessionId);
-        return sessionId;
-      }
-      return null;
-    } catch (error) {
-      console.error('❌ Failed to get pending session:', error);
-      return null;
-    }
-  };
-
-  const clearPendingSession = async () => {
-    try {
-      await AsyncStorage.removeItem('pendingSessionId');
-      console.log('💾 Cleared pending session ID');
-    } catch (error) {
-      console.error('❌ Failed to clear pending session:', error);
-    }
-  };
-
   // Resume OAuth session after app restart - SIMPLIFIED
   const resumeOAuth = async () => {
     console.log('🔄 ===== RESUMEOAUTH CALLED =====');
+
+    console.log("--Resume OAuth--------------------------------------")
+    await printAuthState();
+    console.log("----------------------------------------------------")
     
     // Try to restore complete authentication state (same pattern as Session ID)
     const authRestored = await restoreAuthState();
@@ -167,7 +215,7 @@ export default function App() {
   };
 
   // Deep linking handler function
-    const handleUrl = (event) => {
+  const handleUrl = (event) => {
       const { url } = event;
       console.log('🔗 ===== DEEP LINK HANDLER CALLED =====');
       console.log('🔗 Deep link URL received:', url);
@@ -255,7 +303,7 @@ export default function App() {
         console.error('❌ URL that failed to parse:', url);
         Alert.alert("Deep Link Error", `Failed to parse URL: ${url}\nError: ${error.message}`);
       }
-    };
+  };
 
   useEffect(() => {
     console.log('🔗 ===== APP STARTUP/RESTART =====');
@@ -353,8 +401,10 @@ export default function App() {
   // Helper function to get OAuth URL with platform parameter
   const getOAuthUrl = async (baseUrl) => {
     // Force platform to 'android' for testing if Platform.OS is not working
-    const platformParam = Platform.OS || 'android'; // Fallback to 'android' for testing
+    const platformParam = 'android';
+    // const platformParam = Platform.OS || 'android'; // Fallback to 'android' for testing
     const endpoint = `/api/oauth/url?platform=${platformParam}`;
+    console.log("endpoint:", endpoint);
     
     const response = await apiCallWithUrl(baseUrl, endpoint);
     return response;
@@ -543,7 +593,7 @@ export default function App() {
 
     try {
       console.log(`🌐 Making API call to: ${url}`);
-      console.log(`🌐 Config:`, config);
+      // console.log(`🌐 Config:`, config);
       const response = await fetch(url, config);
 
       if (!response.ok) {
@@ -553,8 +603,9 @@ export default function App() {
       }
 
       const data = await response.json();
-      console.log(`✅ Response status: ${response.status}`);
-      console.log("✅ API Success:", data);
+      // console.log(`✅ Response status: ${response.status}`);
+      // console.log("✅ API Success:", data);
+      console.log("✅ API Success:\n", JSON.stringify(data, null, 2));
       return data;
     } catch (error) {
       console.error("❌ Network Error:", error.message);
@@ -573,7 +624,7 @@ export default function App() {
 
       // Get OAuth URL from AWS API Gateway with platform parameter
       const response = await getOAuthUrl(AWS_API_URL);
-      console.log("🔗 Google OAuth URL received:", JSON.stringify(response, null, 2));
+      // console.log("🔗 Google OAuth URL received:", JSON.stringify(response, null, 2));
       
       setApiResponse(response);
       
@@ -630,6 +681,9 @@ export default function App() {
       await AsyncStorage.removeItem('authProfile');
       // Keep authAccessToken in AsyncStorage for future use
       console.log('💾 Cleared auth state from AsyncStorage (kept Stored Access Token)');
+      console.log("--Logout--------------------------------------------")
+      await printAuthState();
+      console.log("----------------------------------------------------")
     } catch (error) {
       console.error('❌ Failed to clear auth state:', error);
     }
@@ -663,6 +717,10 @@ export default function App() {
 
   const fetchCalendarEvents = async () => {
     try {
+      console.log("Fetching Calendar events for date:", selectedDate);
+      console.log("--Fetch Calendar Events-----------------------------")
+      await printAuthState();
+      console.log("----------------------------------------------------")
       setLoading(true);
       const data = await apiCall(`/api/calendar/events?date=${selectedDate}&sessionId=${sessionId}`);
       setCalendarEvents(data);
@@ -692,6 +750,9 @@ export default function App() {
       Alert.alert("Not Authenticated", "Please sign in first before using the Photo Picker.");
       return;
     }
+    console.log("--Start Google Picker 1-----------------------------")
+    await printAuthState();
+    console.log("----------------------------------------------------")
 
     try {
       setPhotoPickerLoading(true);
@@ -724,18 +785,79 @@ export default function App() {
         throw new Error("Failed to get picker URI");
       }
 
-      console.log("Redirecting to Photo Picker UI:", session.pickerUri);
+        console.log("Opening Photo Picker UI:", session.pickerUri);
+        console.log("--Start Google Picker 2-----------------------------")
+        await printAuthState();
+        console.log("----------------------------------------------------")
 
-      // Open the picker in a new window/tab
-      const pickerWindow = window.open(session.pickerUri, "_blank", "width=800,height=600");
+        // Platform-specific Photo Picker handling
+        if (Platform.OS === "web") {
+          // Web: Open in new window/tab with polling
+          console.log("🌐 Opening Photo Picker in new window (Web)");
+          const pickerWindow = window.open(session.pickerUri, "_blank", "width=800,height=600");
+          console.log("1")
+      
+          // Poll for when the window is closed or check for updates
+          const checkPickerStatus = setInterval(async () => {
+            if (pickerWindow.closed) {
+              clearInterval(checkPickerStatus);
+              console.log("2")
 
-      // Poll for when the window is closed or check for updates
-      const checkPickerStatus = setInterval(async () => {
-        if (pickerWindow.closed) {
-          clearInterval(checkPickerStatus);
+              // Wait a bit for the session to be updated on Google's side
+              setTimeout(async () => {
+                try {
+                  console.log("Before API Call--------------------------------")
+                  const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
+                  console.log("After API Call--------------------------------")
+                  // Transform the data to match React web app format
+                  const photos = [];
+                  
+                  for (const item of data.mediaItems || []) {
+                    console.log("Item:", item);
+                    const baseUrl = item.mediaFile?.baseUrl;
 
-          // Wait a bit for the session to be updated on Google's side
+                    if (baseUrl) {
+                      // Fetch authenticated thumbnail
+                      const thumbnailUrl = baseUrl + "=w200-h200";
+                      const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+                      const photo = {
+                        id: item.id,
+                        name: item.mediaFile?.filename || `Photo ${item.id}`,
+                        url: baseUrl,
+                        thumbnails: [
+                          {
+                            url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                          },
+                        ],
+                        mimeType: item.mediaFile?.mimeType,
+                        creationTime: item.createTime,
+                        width: item.mediaFile?.mediaFileMetadata?.width,
+                        height: item.mediaFile?.mediaFileMetadata?.height,
+                      };
+                      photos.push(photo);
+                    }
+                  }
+                  
+                  if (photos.length > 0) {
+                    console.log('✅ Photo picker results received:', photos.length, 'photos');
+                    setGooglePhotos(photos);
+                    Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
+          } else {
+                    console.log('❌ No selection found for session:', session.id);
+                    Alert.alert("No Photos", "No photos were selected in the picker");
+          }
+        } catch (error) {
+                  console.error('❌ Failed to fetch picker result:', error);
+                  Alert.alert("Error", "Failed to fetch selected photos");
+                }
+              }, 3000); // Wait 3 seconds for session to update
+            }
+          }, 1000);
+
+          // Also try to fetch photos after a longer delay in case the window doesn't close properly
           setTimeout(async () => {
+            clearInterval(checkPickerStatus);
             try {
               const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
               
@@ -772,67 +894,44 @@ export default function App() {
                 console.log('✅ Photo picker results received:', photos.length, 'photos');
                 setGooglePhotos(photos);
                 Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
-      } else {
+          } else {
                 console.log('❌ No selection found for session:', session.id);
                 Alert.alert("No Photos", "No photos were selected in the picker");
-      }
-    } catch (error) {
+          }
+        } catch (error) {
               console.error('❌ Failed to fetch picker result:', error);
               Alert.alert("Error", "Failed to fetch selected photos");
             }
-          }, 3000); // Wait 3 seconds for session to update
-        }
-      }, 1000);
+          }, 30000); // 30 second timeout
 
-      // Also try to fetch photos after a longer delay in case the window doesn't close properly
-      setTimeout(async () => {
-        clearInterval(checkPickerStatus);
-        try {
-          const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
+        } else {
+          // Mobile (Android/iOS): Open in external browser
+          console.log("📱 Opening Photo Picker in external browser (Mobile)");
+          console.log("📱 Photo Picker URI:", session.pickerUri);
           
-          // Transform the data to match React web app format
-          const photos = [];
-          
-          for (const item of data.mediaItems || []) {
-            const baseUrl = item.mediaFile?.baseUrl;
-
-            if (baseUrl) {
-              // Fetch authenticated thumbnail
-              const thumbnailUrl = baseUrl + "=w200-h200";
-              const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
-
-              const photo = {
-                id: item.id,
-                name: item.mediaFile?.filename || `Photo ${item.id}`,
-                url: baseUrl,
-                thumbnails: [
-                  {
-                    url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
-                  },
-                ],
-                mimeType: item.mediaFile?.mimeType,
-                creationTime: item.createTime,
-                width: item.mediaFile?.mediaFileMetadata?.width,
-                height: item.mediaFile?.mediaFileMetadata?.height,
-              };
-              photos.push(photo);
+          try {
+            console.log("📱 Checking if URL can be opened...");
+            const supported = await Linking.canOpenURL(session.pickerUri);
+            console.log("📱 URL supported:", supported);
+            
+            if (supported) {
+              console.log("📱 Opening URL...");
+              await Linking.openURL(session.pickerUri);
+              console.log("📱 URL opened successfully");
+              Alert.alert(
+                "Photo Picker Opened", 
+                "Please select your photos in the browser, then return to this app and click 'Refresh Photos' to see your selections."
+              );
+            } else {
+              console.log("📱 URL not supported");
+              Alert.alert("Error", "Cannot open Photo Picker URL");
             }
+          } catch (error) {
+            console.error("📱 Error opening Photo Picker:", error);
+            Alert.alert("Error", `Failed to open Photo Picker: ${error.message}`);
           }
-          
-          if (photos.length > 0) {
-            console.log('✅ Photo picker results received:', photos.length, 'photos');
-            setGooglePhotos(photos);
-            Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
-      } else {
-            console.log('❌ No selection found for session:', session.id);
-            Alert.alert("No Photos", "No photos were selected in the picker");
-      }
-    } catch (error) {
-          console.error('❌ Failed to fetch picker result:', error);
-          Alert.alert("Error", "Failed to fetch selected photos");
         }
-      }, 30000); // 30 second timeout
-    } catch (error) {
+      } catch (error) {
       console.error("Error starting Photo Picker:", error);
       Alert.alert("Error", "Failed to start Photo Picker.  Please Sign In Again.");
     } finally {
@@ -938,6 +1037,22 @@ export default function App() {
               <Text style={styles.debugText}>Profile: {profile ? 'Loaded' : 'None'}</Text>
               <Text style={styles.debugText}>Authenticated: {(sessionId && (accessToken || debugAccessToken)) ? 'True' : 'False'}</Text>
             </View>
+
+            {/* Show Async Storage Button */}
+            <TouchableOpacity 
+              style={[styles.loginButton, { backgroundColor: "#17a2b8", marginTop: 8 }]} 
+              onPress={printAuthState}
+            >
+              <Text style={styles.loginButtonText}>📦 Show Async Storage</Text>
+            </TouchableOpacity>
+
+            {/* Clear Async Storage Button */}
+            <TouchableOpacity 
+              style={[styles.loginButton, { backgroundColor: "#dc3545", marginTop: 8 }]} 
+              onPress={clearAsyncStorage}
+            >
+              <Text style={styles.loginButtonText}>🧨 Clear Async Storage</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View>
