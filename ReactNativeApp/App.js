@@ -13,7 +13,7 @@ export default function App() {
   // ============================================================================
   
   // Core authentication state
-  const [isAuthenticated, setIsAuthenticated] = useState(null); // null = not yet determined
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Start as false, will be updated by loadDebugInfo
   const [profile, setProfile] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -238,25 +238,21 @@ export default function App() {
         previousProfile,
       });
 
-      // Only update authentication state if we haven't determined it yet
-      if (isAuthenticated === null) {
-        const hasValidAuth = sessionId && accessToken && profile;
-        console.log('🔍 Current isAuthenticated state:', isAuthenticated);
-        console.log('🔍 hasValidAuth:', hasValidAuth);
-        setIsAuthenticated(hasValidAuth);
-        console.log('🔍 isAuthenticated:', isAuthenticated);
-        
-        if (hasValidAuth) {
-          console.log('🔍 Debug: Found valid auth data, setting authenticated to true');
-          // Also update the state variables to match AsyncStorage
-          setSessionId(sessionId);
-          setAccessToken(accessToken);
-          setProfile(profile);
-        } else {
-          console.log('🔍 Debug: No valid auth data found, setting authenticated to false');
-        }
+      // Always update authentication state based on current AsyncStorage data
+      const hasValidAuth = sessionId && accessToken && profile;
+      console.log('🔍 Current isAuthenticated state:', isAuthenticated);
+      console.log('🔍 hasValidAuth:', hasValidAuth);
+      setIsAuthenticated(hasValidAuth);
+      console.log('🔍 Setting isAuthenticated to:', hasValidAuth);
+      
+      if (hasValidAuth) {
+        console.log('🔍 Debug: Found valid auth data, setting authenticated to true');
+        // Also update the state variables to match AsyncStorage
+        setSessionId(sessionId);
+        setAccessToken(accessToken);
+        setProfile(profile);
       } else {
-        console.log('🔍 Debug: Authentication state already determined, not overriding');
+        console.log('🔍 Debug: No valid auth data found, setting authenticated to false');
       }
     } catch (error) {
       console.error('❌ Error loading debug info:', error);
@@ -687,10 +683,10 @@ export default function App() {
                   <View style={styles.debugRow}>
                     <Text style={styles.debugLabel}>Authenticated:</Text>
                     <Text style={[styles.debugValue, { 
-                      color: isAuthenticated === true ? '#28a745' : isAuthenticated === false ? '#dc3545' : '#ffc107',
+                      color: isAuthenticated ? '#28a745' : '#dc3545',
                       fontWeight: 'bold'
                     }]}>
-                      {isAuthenticated === true ? 'True' : isAuthenticated === false ? 'False' : 'Loading...'}
+                      {isAuthenticated ? 'True' : 'False'}
                     </Text>
                   </View>
                 </View>
