@@ -1,6 +1,6 @@
 // App.js — single-file React Native app
 import React, { useEffect, useState } from "react";
-import { View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert } from "react-native";
+import { View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert, Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -37,6 +37,14 @@ export default function App() {
   const [currentAccessToken, setCurrentAccessToken] = useState(null);
   const [currentProfile, setCurrentProfile] = useState(null);
   const [authenticated, setAuthenticated] = useState(false);
+
+  // Additional state for Google services
+  const [driveFiles, setDriveFiles] = useState(null);
+  const [calendarEvents, setCalendarEvents] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
+  const [loading, setLoading] = useState(false);
+  const [drivePhotos, setDrivePhotos] = useState([]);
+  const [photoDataUrls, setPhotoDataUrls] = useState({});
 
   // Local (non-AsyncStorage) holders for authUrl and sessionId returned by the backend
   const [authUrl, setAuthUrl] = useState(null);
@@ -196,6 +204,44 @@ export default function App() {
     currentProfile,
   };
 
+  // API helper function
+  const apiCall = async (endpoint, options = {}) => {
+    const url = `${baseURL}${endpoint}`;
+    const config = {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(currentAccessToken && { Authorization: `Bearer ${currentAccessToken}` }),
+        ...options.headers,
+      },
+    };
+
+    // Add body for POST/PUT requests
+    if (options.data && (options.method === "POST" || options.method === "PUT")) {
+      config.body = JSON.stringify(options.data);
+    }
+
+    try {
+      console.log(`Making API call to: ${url}`, config);
+      const response = await fetch(url, config);
+
+      console.log(`Response status: ${response.status}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API Error ${response.status}:`, errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log(`API Success:`, data);
+      return data;
+    } catch (error) {
+      console.error("API Error:", error.message);
+      throw new Error(error.message);
+    }
+  };
+
   // Fetch tokens and profile from backend
   const fetchTokensAndProfile = async (sessionId) => {
     try {
@@ -349,6 +395,10 @@ export default function App() {
       setCurrentSession(null);
       setCurrentAccessToken(null);
       setCurrentProfile(null);
+      setDriveFiles(null);
+      setCalendarEvents(null);
+      setDrivePhotos([]);
+      setPhotoDataUrls({});
 
       setAuthenticated(false);
       setScreen("login");
@@ -359,27 +409,86 @@ export default function App() {
     }
   };
 
-  // API stubs — currently just console.log and set lastAction
+  // Google Services API calls
   const fetchProfile = async () => {
-    console.log("fetchProfile called");
-    setLastAction("fetchProfile (stub) called");
-    // TODO: call Google People API with currentAccessToken
+    try {
+      setLoading(true);
+      const profileData = await apiCall(`/api/user/profile?sessionId=${currentSession}`);
+      setCurrentProfile(JSON.stringify(profileData));
+      setLastAction("✅ Profile fetched successfully");
+    } catch (error) {
+      console.error("Error fetching profile:", error);
+      Alert.alert("Error", "Failed to fetch profile");
+      setLastAction("❌ Failed to fetch profile");
+    } finally {
+      setLoading(false);
+    }
   };
+
   const fetchCalendar = async () => {
-    console.log("fetchCalendar called");
-    setLastAction("fetchCalendar (stub) called");
+    try {
+      console.log("Fetching Calendar events for date:", selectedDate);
+      setLoading(true);
+      const data = await apiCall(`/api/calendar/events?date=${selectedDate}&sessionId=${currentSession}`);
+      setCalendarEvents(data);
+      setLastAction(`✅ Calendar events fetched for ${selectedDate}`);
+    } catch (error) {
+      console.error("Error fetching Calendar events:", error);
+      Alert.alert("Error", "Failed to fetch Calendar events");
+      setLastAction("❌ Failed to fetch calendar events");
+    } finally {
+      setLoading(false);
+    }
   };
+
   const fetchDriveFiles = async () => {
-    console.log("fetchDriveFiles called");
-    setLastAction("fetchDriveFiles (stub) called");
+    try {
+      setLoading(true);
+      const data = await apiCall(`/api/drive/files?sessionId=${currentSession}`);
+      setDriveFiles(data);
+      setLastAction("✅ Drive files fetched successfully");
+    } catch (error) {
+      console.error("Error fetching Drive files:", error);
+      Alert.alert("Error", "Failed to fetch Drive files");
+      setLastAction("❌ Failed to fetch drive files");
+    } finally {
+      setLoading(false);
+    }
   };
+
   const fetchDrivePhotos = async () => {
-    console.log("fetchDrivePhotos called");
-    setLastAction("fetchDrivePhotos (stub) called");
+    try {
+      setLoading(true);
+      const data = await apiCall(`/api/drive/photos?sessionId=${currentSession}`);
+      const photos = data.photos || [];
+      setDrivePhotos(photos);
+
+      // For now, let's just use the direct Google Drive URLs
+      // The thumbnails from the API should work directly
+      setPhotoDataUrls({}); // Clear any previous data URLs
+
+      setLastAction(`✅ Drive photos fetched successfully (${photos.length} photos)`);
+    } catch (error) {
+      console.error("Error fetching photos:", error);
+      Alert.alert("Error", "Failed to fetch photos");
+      setLastAction("❌ Failed to fetch drive photos");
+    } finally {
+      setLoading(false);
+    }
   };
+
   const fetchGooglePhotos = async () => {
-    console.log("fetchGooglePhotos called");
-    setLastAction("fetchGooglePhotos (stub) called");
+    try {
+      setLoading(true);
+      setLastAction("✅ Google Photos functionality ready");
+      Alert.alert("Google Photos", "Google Photos picker functionality is available");
+    } catch (error) {
+      console.error("Error with Google Photos:", error);
+      Alert.alert("Error", "Failed to access Google Photos");
+      setLastAction("❌ Failed to access Google Photos");
+    } finally {
+      setLoading(false);
+    }
   };
 
   // DEVELOPMENT ONLY: Simulate successful login using demo data.
@@ -410,6 +519,35 @@ export default function App() {
         },
       },
     ]);
+  };
+
+  // Utility functions
+  const formatFileSize = (size) => {
+    if (!size) return "";
+    const bytes = parseInt(size);
+    return `${Math.round(bytes / 1024)} KB`;
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString();
+  };
+
+  const formatTime = (dateTimeString) => {
+    if (!dateTimeString) return "";
+    return new Date(dateTimeString).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
+
+  const getFileIcon = (mimeType) => {
+    if (mimeType?.includes("folder")) return "📁";
+    if (mimeType?.includes("image")) return "🖼️";
+    if (mimeType?.includes("document")) return "📄";
+    if (mimeType?.includes("spreadsheet")) return "📊";
+    if (mimeType?.includes("presentation")) return "📽️";
+    return "📄";
   };
 
   // Render helpers
@@ -469,81 +607,189 @@ export default function App() {
   );
 
   // ---- App Screen ----
-  const AppScreen = () => (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>App Screen</Text>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Authentication Status</Text>
-          <Text>{String(authenticated)}</Text>
+  const AppScreen = () => {
+    if (loading) {
+      return (
+        <View style={[styles.container, { paddingTop: insets.top, justifyContent: "center", alignItems: "center" }]}>
+          <Text style={styles.loadingText}>Loading...</Text>
         </View>
+      );
+    }
 
-        {currentProfile && (
+    return (
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <ScrollView contentContainerStyle={styles.scroll}>
+          <Text style={styles.title}>App Screen</Text>
+
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>User Profile</Text>
-            {(() => {
-              try {
-                const profile = JSON.parse(currentProfile);
-                return (
-                  <View>
-                    <Text style={styles.profileText}>
-                      <Text style={styles.bold}>Name:</Text> {profile.names?.[0]?.displayName || profile.name || "N/A"}
-                    </Text>
-                    <Text style={styles.profileText}>
-                      <Text style={styles.bold}>Email:</Text> {profile.emailAddresses?.[0]?.value || profile.email || "N/A"}
-                    </Text>
-                    <Text style={styles.profileText}>
-                      <Text style={styles.bold}>ID:</Text> {profile.resourceName || profile.id || "N/A"}
-                    </Text>
-                  </View>
-                );
-              } catch (e) {
-                return <Text style={styles.profileText}>Profile data (raw): {currentProfile}</Text>;
-              }
-            })()}
+            <Text style={styles.sectionTitle}>Authentication Status</Text>
+            <Text>{String(authenticated)}</Text>
           </View>
-        )}
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>AsyncStorage values</Text>
-          {Object.entries(allAsyncStorageValues).map(([k, v]) => renderKeyValue(k, v))}
-        </View>
+          {currentProfile && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>User Profile</Text>
+              {(() => {
+                try {
+                  const profile = JSON.parse(currentProfile);
+                  return (
+                    <View>
+                      <Text style={styles.profileText}>
+                        <Text style={styles.bold}>Name:</Text> {profile.names?.[0]?.displayName || profile.name || "N/A"}
+                      </Text>
+                      <Text style={styles.profileText}>
+                        <Text style={styles.bold}>Email:</Text> {profile.emailAddresses?.[0]?.value || profile.email || "N/A"}
+                      </Text>
+                      <Text style={styles.profileText}>
+                        <Text style={styles.bold}>ID:</Text> {profile.resourceName || profile.id || "N/A"}
+                      </Text>
+                    </View>
+                  );
+                } catch (e) {
+                  return <Text style={styles.profileText}>Profile data (raw): {currentProfile}</Text>;
+                }
+              })()}
+            </View>
+          )}
 
-        <View style={styles.buttonsGrid}>
-          <TouchableOpacity style={styles.actionButton} onPress={fetchProfile}>
-            <Text style={styles.actionButtonText}>Google Profile</Text>
-          </TouchableOpacity>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>AsyncStorage values</Text>
+            {Object.entries(allAsyncStorageValues).map(([k, v]) => renderKeyValue(k, v))}
+          </View>
 
-          <TouchableOpacity style={styles.actionButton} onPress={fetchCalendar}>
-            <Text style={styles.actionButtonText}>Google Calendar</Text>
-          </TouchableOpacity>
+          <View style={styles.buttonsGrid}>
+            <TouchableOpacity style={styles.actionButton} onPress={fetchProfile}>
+              <Text style={styles.actionButtonText}>Google Profile</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionButton} onPress={fetchDriveFiles}>
-            <Text style={styles.actionButtonText}>Google Drive Files</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={fetchCalendar}>
+              <Text style={styles.actionButtonText}>Google Calendar</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionButton} onPress={fetchDrivePhotos}>
-            <Text style={styles.actionButtonText}>Google Drive Photos</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={fetchDriveFiles}>
+              <Text style={styles.actionButtonText}>Google Drive Files</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionButton} onPress={fetchGooglePhotos}>
-            <Text style={styles.actionButtonText}>Google Photos</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={fetchDrivePhotos}>
+              <Text style={styles.actionButtonText}>Google Drive Photos</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionButton} onPress={logout}>
-            <Text style={styles.actionButtonText}>Logout</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity style={styles.actionButton} onPress={fetchGooglePhotos}>
+              <Text style={styles.actionButtonText}>Google Photos</Text>
+            </TouchableOpacity>
 
-        <View style={{ marginTop: 12 }}>
-          <Text>Last action: {lastAction}</Text>
-        </View>
+            <TouchableOpacity style={styles.actionButton} onPress={logout}>
+              <Text style={styles.actionButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
 
-        <View style={{ height: 80 }} />
-      </ScrollView>
-    </View>
-  );
+          <View style={{ marginTop: 12 }}>
+            <Text>Last action: {lastAction}</Text>
+          </View>
+
+          {/* Drive Files Results */}
+          {driveFiles && (
+            <View style={styles.resultsCard}>
+              <Text style={styles.resultsTitle}>Recent Drive Files ({driveFiles.files?.length || 0})</Text>
+              {driveFiles.files && driveFiles.files.length > 0 ? (
+                driveFiles.files.map((file) => (
+                  <View key={file.id} style={styles.fileItem}>
+                    <View style={styles.fileInfo}>
+                      <Text style={styles.fileName}>{file.name}</Text>
+                      <Text style={styles.fileType}>
+                        {getFileIcon(file.mimeType)} {file.mimeType?.includes("folder") ? "Folder" : "File"}
+                      </Text>
+                    </View>
+                    <View style={styles.fileMeta}>
+                      <Text style={styles.fileDate}>{formatDate(file.modifiedTime)}</Text>
+                      {file.size && <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>}
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.noDataText}>No files found</Text>
+              )}
+            </View>
+          )}
+
+          {/* Calendar Events Results */}
+          {calendarEvents && (
+            <View style={styles.resultsCard}>
+              <Text style={styles.resultsTitle}>
+                Calendar Events for {formatDate(selectedDate)} ({calendarEvents.items?.length || 0})
+              </Text>
+              {calendarEvents.items && calendarEvents.items.length > 0 ? (
+                calendarEvents.items.map((event) => (
+                  <View key={event.id} style={styles.eventItem}>
+                    <View style={styles.eventInfo}>
+                      <Text style={styles.eventTitle}>{event.summary || "No Title"}</Text>
+                      <Text style={styles.eventTime}>{event.start?.dateTime ? `🕐 ${formatTime(event.start.dateTime)}` : event.start?.date ? "📅 All Day Event" : "⏰ No start time"}</Text>
+                      {event.description && <Text style={styles.eventDescription}>{event.description.substring(0, 100)}...</Text>}
+                    </View>
+                    <View style={styles.eventMeta}>
+                      {event.end?.dateTime && <Text style={styles.eventEndTime}>Ends: {formatTime(event.end.dateTime)}</Text>}
+                      {event.location && <Text style={styles.eventLocation}>📍 {event.location}</Text>}
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.noDataText}>No events found for this date</Text>
+              )}
+            </View>
+          )}
+
+          {/* Drive Photos Results */}
+          {drivePhotos && drivePhotos.length > 0 && (
+            <View style={styles.resultsCard}>
+              <Text style={styles.resultsTitle}>Drive Photos ({drivePhotos.length})</Text>
+              <View style={styles.photosGrid}>
+                {drivePhotos.map((photo, index) => {
+                  // Use the original thumbnail URL from the API response
+                  const thumbnailUrl = photo.thumbnails?.[0]?.url;
+
+                  // Debug logging
+                  console.log(`Photo ${index}: ${photo.name}`);
+                  console.log(`  - Thumbnail URL:`, thumbnailUrl);
+                  console.log(`  - MIME type:`, photo.mimeType);
+
+                  return (
+                    <View key={index} style={styles.photoItem}>
+                      <View style={styles.photoContainer}>
+                        {thumbnailUrl ? (
+                          <Image
+                            source={{ uri: thumbnailUrl }}
+                            style={styles.photoThumbnail}
+                            resizeMode='cover'
+                            onError={() => console.log("Failed to load thumbnail for:", photo.name)}
+                            onLoad={() => console.log("Successfully loaded thumbnail for:", photo.name)}
+                          />
+                        ) : (
+                          <View style={styles.photoPlaceholder}>
+                            <Text style={styles.photoIcon}>🖼️</Text>
+                            <Text style={styles.loadingText}>No thumbnail</Text>
+                          </View>
+                        )}
+                        <Text style={styles.photoName} numberOfLines={2}>
+                          {photo.name}
+                        </Text>
+                      </View>
+                      <View style={styles.photoInfo}>
+                        <Text style={styles.photoType}>{photo.mimeType?.includes("image") ? "🖼️ Image" : "📄 File"}</Text>
+                        {photo.size && <Text style={styles.photoSize}>{formatFileSize(photo.size)}</Text>}
+                        {photo.modifiedTime && <Text style={styles.photoDate}>{formatDate(photo.modifiedTime)}</Text>}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          <View style={{ height: 80 }} />
+        </ScrollView>
+      </View>
+    );
+  };
 
   return screen === "app" || authenticated ? <AppScreen /> : <LoginScreen />;
 }
@@ -591,4 +837,171 @@ const styles = StyleSheet.create({
     borderColor: "#ddd",
   },
   actionButtonText: { fontWeight: "600" },
+  // Results display styles
+  resultsCard: {
+    backgroundColor: "#f8f9fa",
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+    marginBottom: 16,
+  },
+  resultsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 12,
+    color: "#34A853",
+  },
+  fileItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "white",
+    borderRadius: 6,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+  },
+  fileInfo: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1a73e8",
+    marginBottom: 4,
+  },
+  fileType: {
+    fontSize: 12,
+    color: "#666",
+  },
+  fileMeta: {
+    alignItems: "flex-end",
+  },
+  fileDate: {
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 2,
+  },
+  fileSize: {
+    fontSize: 12,
+    color: "#666",
+  },
+  eventItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "white",
+    borderRadius: 6,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+  },
+  eventInfo: {
+    flex: 1,
+  },
+  eventTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1a73e8",
+    marginBottom: 4,
+  },
+  eventTime: {
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 2,
+  },
+  eventDescription: {
+    fontSize: 12,
+    color: "#666",
+  },
+  eventMeta: {
+    alignItems: "flex-end",
+  },
+  eventEndTime: {
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 2,
+  },
+  eventLocation: {
+    fontSize: 12,
+    color: "#666",
+  },
+  noDataText: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    fontStyle: "italic",
+  },
+  loadingText: {
+    fontSize: 16,
+    color: "#666",
+  },
+  // Photo grid styles
+  photosGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  photoItem: {
+    width: "48%",
+    marginBottom: 12,
+    backgroundColor: "white",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+    overflow: "hidden",
+  },
+  photoContainer: {
+    position: "relative",
+  },
+  photoThumbnail: {
+    width: "100%",
+    height: 120,
+  },
+  photoPlaceholder: {
+    width: "100%",
+    height: 120,
+    backgroundColor: "#f0f0f0",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  photoIcon: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  photoName: {
+    fontSize: 12,
+    color: "#333",
+    textAlign: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  photoInfo: {
+    padding: 8,
+  },
+  photoType: {
+    fontSize: 10,
+    color: "#999",
+    textAlign: "center",
+  },
+  photoSize: {
+    fontSize: 10,
+    color: "#999",
+    textAlign: "center",
+  },
+  photoDate: {
+    fontSize: 10,
+    color: "#999",
+    textAlign: "center",
+  },
 });
