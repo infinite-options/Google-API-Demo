@@ -150,13 +150,29 @@ export default function App() {
 
       if (sessionId && success === "true") {
         console.log("🎉 OAuth callback received with sessionId:", sessionId);
-        setGoogleSessionId(sessionId);
 
-        // Fetch tokens and profile first, then complete login
-        fetchTokensAndProfile(sessionId);
+        // Send message to parent window (if this is a popup)
+        if (window.opener) {
+          // Send sessionId to main window via postMessage
+          window.opener.postMessage(
+            {
+              type: "OAUTH_SUCCESS",
+              sessionId: sessionId,
+            },
+            window.location.origin
+          );
 
-        // Clean up URL
-        window.history.replaceState({}, document.title, window.location.pathname);
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+
+          // Close the popup
+          window.close();
+        } else {
+          // Fallback: if not in popup, handle directly in this window
+          setGoogleSessionId(sessionId);
+          fetchTokensAndProfile(sessionId);
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
       }
     }
 
@@ -256,8 +272,31 @@ export default function App() {
 
       // open in browser (user completes OAuth there)
       if (returnedAuthUrl) {
-        Linking.openURL(returnedAuthUrl);
-        Alert.alert("Google Sign In Started", "Please complete authentication in your browser, then return to this app.");
+        if (Platform.OS === "web") {
+          // For web, open in new tab to avoid replacing current page
+          const oauthWindow = window.open(returnedAuthUrl, "_blank", "width=600,height=700");
+
+          // Listen for messages from the OAuth window
+          const handleMessage = (event) => {
+            if (event.origin !== window.location.origin) return;
+
+            if (event.data.type === "OAUTH_SUCCESS" && event.data.sessionId) {
+              console.log("🎉 OAuth success received via postMessage:", event.data.sessionId);
+              setGoogleSessionId(event.data.sessionId);
+              fetchTokensAndProfile(event.data.sessionId);
+              oauthWindow.close();
+              window.removeEventListener("message", handleMessage);
+            }
+          };
+
+          window.addEventListener("message", handleMessage);
+
+          Alert.alert("Google Sign In Started", "Please complete authentication in the popup window. The app will automatically detect when you're done.");
+        } else {
+          // For mobile, use Linking.openURL
+          Linking.openURL(returnedAuthUrl);
+          Alert.alert("Google Sign In Started", "Please complete authentication in your browser, then return to this app.");
+        }
       } else {
         console.warn("No authUrl returned from backend.");
       }
