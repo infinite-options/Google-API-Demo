@@ -50,6 +50,7 @@ export default function App() {
   const [googlePhotos, setGooglePhotos] = useState([]);
   const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState({});
+  const [waitingForPhotos, setWaitingForPhotos] = useState(false);
 
   // Local (non-AsyncStorage) holders for authUrl and sessionId returned by the backend
   const [authUrl, setAuthUrl] = useState(null);
@@ -406,6 +407,7 @@ export default function App() {
       setPhotoDataUrls({});
       setGooglePhotos([]);
       setImageErrors({});
+      setWaitingForPhotos(false);
 
       setAuthenticated(false);
       setScreen("login");
@@ -547,6 +549,7 @@ export default function App() {
         const checkPickerStatus = setInterval(async () => {
           if (pickerWindow.closed) {
             clearInterval(checkPickerStatus);
+            setWaitingForPhotos(true); // Show loading indicator when picker closes
 
             // Wait a bit for the session to be updated on Google's side
             setTimeout(async () => {
@@ -592,9 +595,11 @@ export default function App() {
                   console.log("❌ No selection found for session:", session.id);
                   Alert.alert("No Photos", "No photos were selected in the picker");
                 }
+                setWaitingForPhotos(false); // Hide loading indicator
               } catch (error) {
                 console.error("❌ Failed to fetch picker result:", error);
                 Alert.alert("Error", "Failed to fetch selected photos");
+                setWaitingForPhotos(false); // Hide loading indicator
               }
             }, 3000); // Wait 3 seconds for session to update
           }
@@ -603,6 +608,7 @@ export default function App() {
         // Also try to fetch photos after a longer delay in case the window doesn't close properly
         setTimeout(async () => {
           clearInterval(checkPickerStatus);
+          setWaitingForPhotos(true); // Show loading indicator for fallback
           try {
             console.log("Fetching picker results (fallback)...");
             const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
@@ -644,9 +650,11 @@ export default function App() {
               console.log("❌ No selection found for session:", session.id);
               Alert.alert("No Photos", "No photos were selected in the picker");
             }
+            setWaitingForPhotos(false); // Hide loading indicator
           } catch (error) {
             console.error("❌ Failed to fetch picker result:", error);
             Alert.alert("Error", "Failed to fetch selected photos");
+            setWaitingForPhotos(false); // Hide loading indicator
           }
         }, 30000); // 30 second timeout
       } else {
@@ -676,6 +684,7 @@ export default function App() {
     } catch (error) {
       console.error("Error starting Photo Picker:", error);
       Alert.alert("Error", "Failed to start Photo Picker. Please Sign In Again.");
+      setWaitingForPhotos(false); // Hide loading indicator on error
     } finally {
       setPhotoPickerLoading(false);
     }
@@ -891,6 +900,15 @@ export default function App() {
             <Text>Last action: {lastAction}</Text>
           </View>
 
+          {/* Loading indicator for Google Photos */}
+          {waitingForPhotos && (
+            <View style={styles.loadingCard}>
+              <Text style={styles.loadingTitle}>⏳ Processing Photos...</Text>
+              <Text style={styles.loadingSubtitle}>Please wait while we fetch your selected photos from Google Photos.</Text>
+              <Text style={styles.loadingHint}>This may take up to 30 seconds.</Text>
+            </View>
+          )}
+
           {/* Drive Files Results */}
           {driveFiles && (
             <View style={styles.resultsCard}>
@@ -958,12 +976,15 @@ export default function App() {
 
                   return (
                     <View key={index} style={styles.photoItem}>
+                      <Text style={styles.photoName} numberOfLines={2}>
+                        {photo.name}
+                      </Text>
                       <View style={styles.photoContainer}>
                         {thumbnailUrl ? (
                           <Image
                             source={{ uri: thumbnailUrl }}
                             style={styles.photoThumbnail}
-                            resizeMode='cover'
+                            resizeMode='contain'
                             onError={() => console.log("Failed to load thumbnail for:", photo.name)}
                             onLoad={() => console.log("Successfully loaded thumbnail for:", photo.name)}
                           />
@@ -973,9 +994,6 @@ export default function App() {
                             <Text style={styles.loadingText}>No thumbnail</Text>
                           </View>
                         )}
-                        <Text style={styles.photoName} numberOfLines={2}>
-                          {photo.name}
-                        </Text>
                       </View>
                       <View style={styles.photoInfo}>
                         <Text style={styles.photoType}>{photo.mimeType?.includes("image") ? "🖼️ Image" : "📄 File"}</Text>
@@ -996,11 +1014,14 @@ export default function App() {
               <View style={styles.photosGrid}>
                 {googlePhotos.map((photo, index) => (
                   <View key={index} style={styles.photoItem}>
+                    <Text style={styles.photoName} numberOfLines={2}>
+                      {photo.name}
+                    </Text>
                     {photo.thumbnails?.[0]?.url && !imageErrors[photo.id] ? (
                       <Image
                         source={{ uri: photo.thumbnails[0].url }}
                         style={styles.photoThumbnail}
-                        resizeMode='cover'
+                        resizeMode='contain'
                         onLoad={() => console.log("Thumbnail loaded successfully:", photo.name)}
                         onError={(error) => {
                           console.log("Thumbnail load error, trying full image:", photo.name, error.nativeEvent);
@@ -1011,7 +1032,7 @@ export default function App() {
                       <Image
                         source={{ uri: photo.url }}
                         style={styles.photoThumbnail}
-                        resizeMode='cover'
+                        resizeMode='contain'
                         onLoad={() => console.log("Full image loaded successfully:", photo.name)}
                         onError={(error) => {
                           console.log("Full image also failed:", photo.name, error.nativeEvent);
@@ -1025,7 +1046,6 @@ export default function App() {
                       </View>
                     )}
                     <View style={styles.photoInfo}>
-                      <Text style={styles.photoName}>{photo.name}</Text>
                       {photo.width && photo.height && (
                         <Text style={styles.photoDimensions}>
                           📐 {photo.width}x{photo.height}
@@ -1233,12 +1253,9 @@ const styles = StyleSheet.create({
     color: "#333",
     textAlign: "center",
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
+    paddingVertical: 6,
+    marginBottom: 8,
+    fontWeight: "600",
   },
   photoInfo: {
     padding: 8,
@@ -1267,5 +1284,32 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  // Loading indicator styles
+  loadingCard: {
+    backgroundColor: "#e3f2fd",
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#2196f3",
+    marginTop: 12,
+    alignItems: "center",
+  },
+  loadingTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1976d2",
+    marginBottom: 8,
+  },
+  loadingSubtitle: {
+    fontSize: 14,
+    color: "#424242",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  loadingHint: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
   },
 });
