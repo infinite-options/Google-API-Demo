@@ -62,26 +62,46 @@ export default function App() {
   // small UI message area to show last-button pressed
   const [lastAction, setLastAction] = useState("");
 
+  // Build information
+  const buildNumber = "1.0.0";
+  const buildTimestamp = new Date().toLocaleString();
+
   useEffect(() => {
     // load AsyncStorage values once on mount
     (async () => {
       try {
+        console.log("🔄 App starting up - loading AsyncStorage values...");
         const [cs, cat, cp] = await Promise.all([AsyncStorage.getItem(CURRENT_SESSION), AsyncStorage.getItem(CURRENT_ACCESS_TOKEN), AsyncStorage.getItem(CURRENT_PROFILE)]);
+
+        console.log("📦 Raw AsyncStorage values:", {
+          currentSession: cs,
+          currentAccessToken: cat ? `${cat.substring(0, 20)}...` : null,
+          currentProfile: cp ? `${cp.substring(0, 50)}...` : null,
+        });
+
         setCurrentSession(cs);
         setCurrentAccessToken(cat);
         setCurrentProfile(cp);
 
-        // If currentSession & access token exist, mark authenticated (simple heuristic)
-        const isAuth = !!cs && !!cat && !!cp;
+        // If access token exists, mark authenticated (even if session is null - we might get a new session from deep link)
+        const isAuth = !!cat && !!cp;
         setAuthenticated(isAuth);
         setScreen(isAuth ? "app" : "login");
+
+        console.log("🔑 Authentication state:", {
+          session: cs,
+          hasToken: !!cat,
+          hasProfile: !!cp,
+          isAuth,
+          screen: isAuth ? "app" : "login",
+        });
       } catch (err) {
         console.warn("Failed to load AsyncStorage:", err);
       }
     })();
 
     // Set up deep linking listener
-    const handleUrl = (event) => {
+    const handleUrl = async (event) => {
       const { url } = event;
       console.log("🔗 Deep link URL received:", url);
 
@@ -100,10 +120,17 @@ export default function App() {
             setGoogleSessionId(sessionId);
 
             // Show immediate feedback
-            Alert.alert("Deep Link Detected!", `Session ID: ${sessionId}\nProcessing authentication...`);
+            Alert.alert("Deep Link Detected!", `Session ID: ${sessionId}\nProcessing photos...`);
 
-            // Fetch tokens and profile, then complete login
-            fetchTokensAndProfile(sessionId);
+            // If we have an access token, use it with the new session ID to fetch photos
+            if (currentAccessToken) {
+              console.log("🔑 Using existing access token with new session ID");
+              await updateSessionId(sessionId);
+              fetchGooglePhotosWithSession(sessionId);
+            } else {
+              // Fallback to original flow if no access token
+              fetchTokensAndProfile(sessionId);
+            }
           } else {
             console.log("❌ No sessionId found in deep link");
             Alert.alert("Deep Link Error", "No sessionId found in the deep link URL");
@@ -118,10 +145,17 @@ export default function App() {
             setGoogleSessionId(session);
 
             // Show immediate feedback
-            Alert.alert("Deep Link Detected!", `Session: ${session}\nProcessing authentication...`);
+            Alert.alert("Deep Link Detected!", `Session: ${session}\nProcessing photos...`);
 
-            // Fetch tokens and profile, then complete login
-            fetchTokensAndProfile(session);
+            // If we have an access token, use it with the new session ID to fetch photos
+            if (currentAccessToken) {
+              console.log("🔑 Using existing access token with new session ID (legacy)");
+              await updateSessionId(session);
+              fetchGooglePhotosWithSession(session);
+            } else {
+              // Fallback to original flow if no access token
+              fetchTokensAndProfile(session);
+            }
           } else {
             console.log("❌ No session found in legacy deep link");
             Alert.alert("Deep Link Error", "No session found in the legacy deep link URL");
@@ -371,15 +405,16 @@ export default function App() {
       console.log("🔑 Completing login with sessionId:", sessionId);
 
       // Store current values in AsyncStorage
-      await AsyncStorage.setItem(CURRENT_SESSION, sessionId ?? "");
-      await AsyncStorage.setItem(CURRENT_ACCESS_TOKEN, accessToken ?? "");
-      await AsyncStorage.setItem(CURRENT_PROFILE, profile ?? "");
+      await AsyncStorage.setItem(CURRENT_SESSION, sessionId ?? "error");
+      await AsyncStorage.setItem(CURRENT_ACCESS_TOKEN, accessToken ?? "error");
+      await AsyncStorage.setItem(CURRENT_PROFILE, profile ?? "error");
       console.log("💾 ✅ Current session data stored in AsyncStorage");
 
       // Update local state
       setCurrentSession(sessionId);
       setCurrentAccessToken(accessToken);
       setCurrentProfile(profile);
+      setGoogleSessionId(sessionId); // Set googleSessionId to the session ID
 
       setAuthenticated(true);
       setScreen("app");
@@ -391,16 +426,34 @@ export default function App() {
     }
   };
 
+  // Function to update session ID when we get a new one from deep link
+  const updateSessionId = async (newSessionId) => {
+    try {
+      console.log("🔄 Updating session ID to:", newSessionId);
+      console.log("🔑 Current access token before update:", currentAccessToken ? `${currentAccessToken.substring(0, 20)}...` : "None");
+
+      await AsyncStorage.setItem(CURRENT_SESSION, newSessionId);
+      setCurrentSession(newSessionId);
+      setGoogleSessionId(newSessionId);
+
+      // Verify the update
+      const storedSession = await AsyncStorage.getItem(CURRENT_SESSION);
+      console.log("✅ Session ID updated successfully. Stored value:", storedSession);
+    } catch (err) {
+      console.error("❌ Failed to update session ID:", err);
+    }
+  };
+
   // Logout: set authenticated false and clear current AsyncStorage
   const logout = async () => {
     try {
-      await AsyncStorage.removeItem(CURRENT_SESSION);
-      await AsyncStorage.removeItem(CURRENT_ACCESS_TOKEN);
-      await AsyncStorage.removeItem(CURRENT_PROFILE);
+      // await AsyncStorage.removeItem(CURRENT_SESSION);
+      // await AsyncStorage.removeItem(CURRENT_ACCESS_TOKEN);
+      // await AsyncStorage.removeItem(CURRENT_PROFILE);
 
-      setCurrentSession(null);
-      setCurrentAccessToken(null);
-      setCurrentProfile(null);
+      // setCurrentSession(null);
+      // setCurrentAccessToken(null);
+      // setCurrentProfile(null);
       setDriveFiles(null);
       setCalendarEvents(null);
       setDrivePhotos([]);
@@ -408,6 +461,7 @@ export default function App() {
       setGooglePhotos([]);
       setImageErrors({});
       setWaitingForPhotos(false);
+      setGoogleSessionId(null);
 
       setAuthenticated(false);
       setScreen("login");
@@ -690,6 +744,69 @@ export default function App() {
     }
   };
 
+  // Function to fetch Google Photos using existing access token with new session ID
+  const fetchGooglePhotosWithSession = async (sessionId) => {
+    try {
+      setWaitingForPhotos(true);
+      setLoading(true);
+      console.log("📸 Fetching Google Photos with session ID:", sessionId);
+      console.log("🔑 Using existing access token:", currentAccessToken ? "Yes" : "No");
+      console.log("🔑 Access token value:", currentAccessToken ? `${currentAccessToken.substring(0, 30)}...` : "None");
+      console.log("🔑 Current session:", currentSession);
+      console.log("🔑 Google session ID:", googleSessionId);
+
+      const data = await apiCall(`/api/photos/picker/media?sessionId=${sessionId}`);
+
+      // Transform the data to match React web app format
+      const photos = [];
+
+      for (const item of data.mediaItems || []) {
+        console.log("Item:", item);
+        const baseUrl = item.mediaFile?.baseUrl;
+
+        if (baseUrl) {
+          // Fetch authenticated thumbnail
+          const thumbnailUrl = baseUrl + "=w200-h200";
+          const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+          const photo = {
+            id: item.id,
+            name: item.mediaFile?.filename || `Photo ${item.id}`,
+            url: baseUrl,
+            thumbnails: [
+              {
+                url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+              },
+            ],
+            mimeType: item.mediaFile?.mimeType,
+            creationTime: item.createTime,
+            width: item.mediaFile?.mediaFileMetadata?.width,
+            height: item.mediaFile?.mediaFileMetadata?.height,
+          };
+          photos.push(photo);
+        }
+      }
+
+      if (photos.length > 0) {
+        console.log("✅ Photo picker results received:", photos.length, "photos");
+        setGooglePhotos(photos);
+        Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
+        setLastAction(`✅ Google Photos loaded (${photos.length} photos)`);
+      } else {
+        console.log("❌ No selection found for session:", sessionId);
+        Alert.alert("No Photos", "No photos were selected in the picker");
+        setLastAction("❌ No photos selected");
+      }
+    } catch (error) {
+      console.error("❌ Failed to fetch photos with session:", error);
+      Alert.alert("Error", "Failed to fetch selected photos");
+      setLastAction("❌ Failed to fetch photos");
+    } finally {
+      setLoading(false);
+      setWaitingForPhotos(false);
+    }
+  };
+
   const fetchGooglePhotos = async () => {
     try {
       setLoading(true);
@@ -775,6 +892,11 @@ export default function App() {
   const LoginScreen = () => (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        <View style={styles.buildInfo}>
+          <Text style={styles.buildText}>Build: {buildNumber}</Text>
+          <Text style={styles.buildText}>Started: {buildTimestamp}</Text>
+        </View>
+
         <Text style={styles.title}>Login Screen</Text>
 
         <TouchableOpacity style={styles.googleButton} onPress={signInGoogle}>
@@ -789,6 +911,11 @@ export default function App() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>AsyncStorage values</Text>
           {Object.entries(allAsyncStorageValues).map(([k, v]) => renderKeyValue(k, v))}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Google Session ID</Text>
+          {renderKeyValue("googleSessionId", googleSessionId)}
         </View>
 
         <View style={styles.section}>
@@ -832,6 +959,11 @@ export default function App() {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <ScrollView contentContainerStyle={styles.scroll}>
+          <View style={styles.buildInfo}>
+            <Text style={styles.buildText}>Build: {buildNumber}</Text>
+            <Text style={styles.buildText}>Started: {buildTimestamp}</Text>
+          </View>
+
           <Text style={styles.title}>App Screen</Text>
 
           <View style={styles.section}>
@@ -868,6 +1000,11 @@ export default function App() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>AsyncStorage values</Text>
             {Object.entries(allAsyncStorageValues).map(([k, v]) => renderKeyValue(k, v))}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Google Session ID</Text>
+            {renderKeyValue("googleSessionId", googleSessionId)}
           </View>
 
           <View style={styles.buttonsGrid}>
@@ -1311,5 +1448,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     fontStyle: "italic",
+  },
+  // Build info styles
+  buildInfo: {
+    backgroundColor: "#f0f0f0",
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: "#007AFF",
+  },
+  buildText: {
+    fontSize: 12,
+    color: "#666",
+    fontFamily: "monospace",
   },
 });
