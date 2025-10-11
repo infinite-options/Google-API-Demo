@@ -1,6 +1,7 @@
 // App.js — single-file React Native app
 import React, { useEffect, useState } from "react";
-import { SafeAreaView, View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert } from "react-native";
+import { View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /**
@@ -28,6 +29,9 @@ const CURRENT_ACCESS_TOKEN = "currentAccessToken";
 const CURRENT_PROFILE = "currentProfile";
 
 export default function App() {
+  // Get safe area insets
+  const insets = useSafeAreaInsets();
+
   // 4 variables (3 AsyncStorage-backed values + 1 boolean)
   const [currentSession, setCurrentSession] = useState(null);
   const [currentAccessToken, setCurrentAccessToken] = useState(null);
@@ -418,7 +422,7 @@ export default function App() {
 
   // ---- Login Screen ----
   const LoginScreen = () => (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>Login Screen</Text>
 
@@ -461,12 +465,12 @@ export default function App() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 
   // ---- App Screen ----
   const AppScreen = () => (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>App Screen</Text>
 
@@ -538,7 +542,7 @@ export default function App() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 
   return screen === "app" || authenticated ? <AppScreen /> : <LoginScreen />;
