@@ -1,20 +1,551 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+// App.js — single-file React Native app
+import React, { useEffect, useState } from "react";
+import { SafeAreaView, View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+/**
+ * Environment variables from your .env file (exported by your bundler)
+ * Make sure your bundler / Expo is configured to expose these at runtime.
+ */
+const {
+  EXPO_PUBLIC_ABLY_API_KEY,
+  REACT_APP_GOOGLE_CLIENT_ID_WEB,
+  REACT_APP_GOOGLE_CLIENT_SECRET_WEB,
+  EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB,
+  EXPO_PUBLIC_GOOGLE_CLIENT_ID_MOBILE,
+  EXPO_PUBLIC_GOOGLE_CLIENT_SECRET_WEB,
+  EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID,
+  REDIRECT_URI,
+  REACT_APP_SECURE_MODE,
+} = process.env;
+
+/** Backend base url you gave */
+const baseURL = "https://bmarz6chil.execute-api.us-west-1.amazonaws.com/dev";
+
+/** AsyncStorage keys (explicit) */
+const CURRENT_SESSION = "currentSession";
+const CURRENT_ACCESS_TOKEN = "currentAccessToken";
+const CURRENT_PROFILE = "currentProfile";
 
 export default function App() {
-  return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
+  // 4 variables (3 AsyncStorage-backed values + 1 boolean)
+  const [currentSession, setCurrentSession] = useState(null);
+  const [currentAccessToken, setCurrentAccessToken] = useState(null);
+  const [currentProfile, setCurrentProfile] = useState(null);
+  const [authenticated, setAuthenticated] = useState(false);
+
+  // Local (non-AsyncStorage) holders for authUrl and sessionId returned by the backend
+  const [authUrl, setAuthUrl] = useState(null);
+  const [googleSessionId, setGoogleSessionId] = useState(null);
+
+  // UI state: which screen to show
+  const [screen, setScreen] = useState("login"); // "login" or "app"
+
+  // small UI message area to show last-button pressed
+  const [lastAction, setLastAction] = useState("");
+
+  useEffect(() => {
+    // load AsyncStorage values once on mount
+    (async () => {
+      try {
+        const [cs, cat, cp] = await Promise.all([AsyncStorage.getItem(CURRENT_SESSION), AsyncStorage.getItem(CURRENT_ACCESS_TOKEN), AsyncStorage.getItem(CURRENT_PROFILE)]);
+        setCurrentSession(cs);
+        setCurrentAccessToken(cat);
+        setCurrentProfile(cp);
+
+        // If currentSession & access token exist, mark authenticated (simple heuristic)
+        const isAuth = !!cs && !!cat && !!cp;
+        setAuthenticated(isAuth);
+        setScreen(isAuth ? "app" : "login");
+      } catch (err) {
+        console.warn("Failed to load AsyncStorage:", err);
+      }
+    })();
+
+    // Set up deep linking listener
+    const handleUrl = (event) => {
+      const { url } = event;
+      console.log("🔗 Deep link URL received:", url);
+
+      try {
+        const parsed = new URL(url);
+        console.log("🔗 Parsed URL protocol:", parsed.protocol);
+        console.log("🔗 Parsed URL host:", parsed.host);
+        console.log("🔗 Parsed URL pathname:", parsed.pathname);
+        console.log("🔗 All search params:", Object.fromEntries(parsed.searchParams));
+
+        if (parsed.protocol === "googleapidemo:" && parsed.host === "photos") {
+          const sessionId = parsed.searchParams.get("sessionId");
+          console.log("🔗 Extracted sessionId from googleapidemo:", sessionId);
+          if (sessionId) {
+            console.log("📸 Photo picker completed, fetching results for sessionId:", sessionId);
+            setGoogleSessionId(sessionId);
+
+            // Show immediate feedback
+            Alert.alert("Deep Link Detected!", `Session ID: ${sessionId}\nProcessing authentication...`);
+
+            // Fetch tokens and profile, then complete login
+            fetchTokensAndProfile(sessionId);
+          } else {
+            console.log("❌ No sessionId found in deep link");
+            Alert.alert("Deep Link Error", "No sessionId found in the deep link URL");
+          }
+        }
+        // Also support legacy capshnz:// format
+        else if (parsed.protocol === "capshnz:" && parsed.host === "photos") {
+          const session = parsed.searchParams.get("session");
+          console.log("🔗 Extracted session from capshnz:", session);
+          if (session) {
+            console.log("📸 Photo picker completed (legacy), fetching results for session:", session);
+            setGoogleSessionId(session);
+
+            // Show immediate feedback
+            Alert.alert("Deep Link Detected!", `Session: ${session}\nProcessing authentication...`);
+
+            // Fetch tokens and profile, then complete login
+            fetchTokensAndProfile(session);
+          } else {
+            console.log("❌ No session found in legacy deep link");
+            Alert.alert("Deep Link Error", "No session found in the legacy deep link URL");
+          }
+        } else {
+          console.log("🔗 Deep link URL does not match expected patterns");
+          console.log("🔗 Expected: googleapidemo://photos/selection?sessionId=xyz");
+          console.log("🔗 Expected: capshnz://photos/selection?session=xyz");
+          console.log("🔗 Received:", url);
+          Alert.alert("Deep Link Mismatch", `URL doesn't match expected patterns.\nReceived: ${url}\nExpected: googleapidemo://photos/selection?sessionId=xyz`);
+        }
+      } catch (error) {
+        console.error("❌ Error parsing deep link URL:", error);
+        Alert.alert("Deep Link Error", `Failed to parse URL: ${url}\nError: ${error.message}`);
+      }
+    };
+
+    // Listen for deep links
+    const linkingListener = Linking.addEventListener("url", handleUrl);
+
+    // Check initial URL if app was launched via link
+    Linking.getInitialURL()
+      .then((url) => {
+        console.log("🔗 Checking initial URL:", url);
+        if (url) {
+          console.log("🔗 Initial deep link URL found:", url);
+          handleUrl({ url });
+        } else {
+          console.log("🔗 No initial deep link URL");
+        }
+      })
+      .catch((error) => {
+        console.error("🔗 Error checking initial URL:", error);
+      });
+
+    // Handle OAuth callback for web platform
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      console.log("🔗 Web platform detected, checking URL parameters...");
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionId = urlParams.get("sessionId");
+      const success = urlParams.get("success");
+
+      console.log("🔗 URL params - sessionId:", sessionId, "success:", success);
+
+      if (sessionId && success === "true") {
+        console.log("🎉 OAuth callback received with sessionId:", sessionId);
+        setGoogleSessionId(sessionId);
+
+        // Fetch tokens and profile first, then complete login
+        fetchTokensAndProfile(sessionId);
+
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+
+    // Cleanup deep linking listener
+    return () => {
+      console.log("🔗 Cleaning up deep link listener...");
+      if (linkingListener) {
+        linkingListener.remove();
+      }
+    };
+  }, []);
+
+  // Helper: display AsyncStorage values as an object for UI
+  const allAsyncStorageValues = {
+    currentSession,
+    currentAccessToken,
+    currentProfile,
+  };
+
+  // Fetch tokens and profile from backend
+  const fetchTokensAndProfile = async (sessionId) => {
+    try {
+      console.log("🔑 Fetching tokens and profile for sessionId:", sessionId);
+
+      // Get tokens from backend
+      const tokenResponse = await fetch(`${baseURL}/api/oauth/token/${sessionId}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!tokenResponse.ok) {
+        const errorText = await tokenResponse.text();
+        console.error(`Token API Error ${tokenResponse.status}:`, errorText);
+        throw new Error(`HTTP ${tokenResponse.status}: ${errorText}`);
+      }
+
+      const tokenData = await tokenResponse.json();
+      console.log("🔑 ✅ Tokens received");
+
+      // Fetch profile with the token
+      const profileResponse = await fetch(`${baseURL}/api/user/profile`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!profileResponse.ok) {
+        const errorText = await profileResponse.text();
+        console.error(`Profile API Error ${profileResponse.status}:`, errorText);
+        throw new Error(`HTTP ${profileResponse.status}: ${errorText}`);
+      }
+
+      const profileData = await profileResponse.json();
+      console.log("🔑 ✅ Profile received");
+
+      // Complete login with real data
+      await completeLogin({
+        sessionId: sessionId,
+        accessToken: tokenData.access_token,
+        profile: JSON.stringify(profileData),
+      });
+
+      Alert.alert("Authentication Complete!", "You're now signed in!", [{ text: "OK" }]);
+    } catch (error) {
+      console.error("🔑 ❌ Failed to fetch tokens and profile:", error);
+      Alert.alert("Authentication Error", `Failed to complete authentication: ${error.message}`);
+    }
+  };
+
+  // Sign in button: call backend to get authUrl and sessionId (platform-specific)
+  const platformParam = Platform.OS === "android" ? "android" : Platform.OS === "ios" ? "ios" : "web";
+  const signInGoogle = async () => {
+    try {
+      const endpoint = `/api/oauth/url?platform=${encodeURIComponent(platformParam)}`;
+      const url = `${baseURL}${endpoint}`;
+      console.log("Calling backend for auth url:", url);
+
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        console.warn("Backend returned non-OK:", resp.status);
+        const text = await resp.text();
+        console.warn(text);
+        return;
+      }
+      const data = await resp.json();
+      // expected shape: { authUrl, sessionId } per your spec
+      const { authUrl: returnedAuthUrl, sessionId } = data;
+      console.log("backend returned:", data);
+
+      // store locally (state), NOT in AsyncStorage
+      setAuthUrl(returnedAuthUrl);
+      setGoogleSessionId(sessionId);
+
+      // open in browser (user completes OAuth there)
+      if (returnedAuthUrl) {
+        Linking.openURL(returnedAuthUrl);
+        Alert.alert("Google Sign In Started", "Please complete authentication in your browser, then return to this app.");
+      } else {
+        console.warn("No authUrl returned from backend.");
+      }
+    } catch (err) {
+      console.warn("signInGoogle error:", err);
+      Alert.alert("Error", `Google login failed: ${err.message}`);
+    }
+  };
+
+  /**
+   * Complete login with real tokens and profile from backend.
+   * This function stores current AsyncStorage keys and sets authenticated -> true.
+   */
+  const completeLogin = async ({ sessionId, accessToken, profile }) => {
+    try {
+      console.log("🔑 Completing login with sessionId:", sessionId);
+
+      // Store current values in AsyncStorage
+      await AsyncStorage.setItem(CURRENT_SESSION, sessionId ?? "");
+      await AsyncStorage.setItem(CURRENT_ACCESS_TOKEN, accessToken ?? "");
+      await AsyncStorage.setItem(CURRENT_PROFILE, profile ?? "");
+      console.log("💾 ✅ Current session data stored in AsyncStorage");
+
+      // Update local state
+      setCurrentSession(sessionId);
+      setCurrentAccessToken(accessToken);
+      setCurrentProfile(profile);
+
+      setAuthenticated(true);
+      setScreen("app");
+      setLastAction("✅ Authentication completed successfully! Session/token/profile stored in AsyncStorage.");
+      console.log("✅ completeLogin done: sessionId", sessionId);
+    } catch (err) {
+      console.error("❌ completeLogin error:", err);
+      Alert.alert("Login Error", `Failed to complete login: ${err.message}`);
+    }
+  };
+
+  // Logout: set authenticated false and clear current AsyncStorage
+  const logout = async () => {
+    try {
+      await AsyncStorage.removeItem(CURRENT_SESSION);
+      await AsyncStorage.removeItem(CURRENT_ACCESS_TOKEN);
+      await AsyncStorage.removeItem(CURRENT_PROFILE);
+
+      setCurrentSession(null);
+      setCurrentAccessToken(null);
+      setCurrentProfile(null);
+
+      setAuthenticated(false);
+      setScreen("login");
+      setLastAction("Logged out and cleared current AsyncStorage values.");
+      console.log("Logged out. current values cleared.");
+    } catch (err) {
+      console.warn("logout error:", err);
+    }
+  };
+
+  // API stubs — currently just console.log and set lastAction
+  const fetchProfile = async () => {
+    console.log("fetchProfile called");
+    setLastAction("fetchProfile (stub) called");
+    // TODO: call Google People API with currentAccessToken
+  };
+  const fetchCalendar = async () => {
+    console.log("fetchCalendar called");
+    setLastAction("fetchCalendar (stub) called");
+  };
+  const fetchDriveFiles = async () => {
+    console.log("fetchDriveFiles called");
+    setLastAction("fetchDriveFiles (stub) called");
+  };
+  const fetchDrivePhotos = async () => {
+    console.log("fetchDrivePhotos called");
+    setLastAction("fetchDrivePhotos (stub) called");
+  };
+  const fetchGooglePhotos = async () => {
+    console.log("fetchGooglePhotos called");
+    setLastAction("fetchGooglePhotos (stub) called");
+  };
+
+  // DEVELOPMENT ONLY: Simulate successful login using demo data.
+  // This bypasses the real OAuth flow for testing purposes.
+  const simulateSuccessUsingBackend = async () => {
+    Alert.alert("Development Mode", "This will simulate a successful login using demo data. In production, use the real OAuth flow.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Continue",
+        onPress: async () => {
+          // In a real app you'd exchange the backend sessionId for an access token (via backend)
+          // For demo we fabricate an access token and profile object
+          const demoAccessToken = `demo-token-${Date.now()}`;
+          const demoProfile = JSON.stringify({
+            id: "demo-user-123",
+            name: "Demo User",
+            email: "demo@example.com",
+          });
+
+          // prefer using googleSessionId if present; otherwise use a generated one
+          const sessionIdToUse = googleSessionId ?? `demo-session-${Date.now()}`;
+
+          await completeLogin({
+            sessionId: sessionIdToUse,
+            accessToken: demoAccessToken,
+            profile: demoProfile,
+          });
+        },
+      },
+    ]);
+  };
+
+  // Render helpers
+  const renderKeyValue = (key, value) => (
+    <View key={key} style={styles.kvRow}>
+      <Text style={styles.kvKey}>{key}:</Text>
+      <Text style={styles.kvValue}>{value === null || value === "" ? "null" : String(value)}</Text>
     </View>
   );
+
+  // ---- Login Screen ----
+  const LoginScreen = () => (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.title}>Login Screen</Text>
+
+        <TouchableOpacity style={styles.googleButton} onPress={signInGoogle}>
+          <Text style={styles.googleButtonText}>Sign In Google</Text>
+        </TouchableOpacity>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Authentication Status</Text>
+          <Text>{String(authenticated)}</Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>AsyncStorage values</Text>
+          {Object.entries(allAsyncStorageValues).map(([k, v]) => renderKeyValue(k, v))}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Backend response (local only)</Text>
+          {renderKeyValue("authUrl", authUrl)}
+          {renderKeyValue("googleSessionId", googleSessionId)}
+        </View>
+
+        <View style={{ marginVertical: 8 }}>
+          <Button title='🧪 Simulate Login (DEV ONLY)' onPress={simulateSuccessUsingBackend} />
+        </View>
+
+        <View style={{ marginVertical: 8 }}>
+          <Text style={styles.hint}>
+            <Text style={styles.bold}>Real OAuth Flow:</Text> Press "Sign In Google" to open the auth URL. After completing OAuth in your browser, the app will automatically detect the deep link
+            callback and complete authentication.
+          </Text>
+        </View>
+
+        <View style={{ marginVertical: 8 }}>
+          <Text style={styles.hint}>
+            <Text style={styles.bold}>Deep Link Support:</Text> The app supports both googleapidemo://photos/selection?sessionId=xyz and capshnz://photos/selection?session=xyz URL formats.
+          </Text>
+        </View>
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+
+  // ---- App Screen ----
+  const AppScreen = () => (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.title}>App Screen</Text>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Authentication Status</Text>
+          <Text>{String(authenticated)}</Text>
+        </View>
+
+        {currentProfile && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>User Profile</Text>
+            {(() => {
+              try {
+                const profile = JSON.parse(currentProfile);
+                return (
+                  <View>
+                    <Text style={styles.profileText}>
+                      <Text style={styles.bold}>Name:</Text> {profile.names?.[0]?.displayName || profile.name || "N/A"}
+                    </Text>
+                    <Text style={styles.profileText}>
+                      <Text style={styles.bold}>Email:</Text> {profile.emailAddresses?.[0]?.value || profile.email || "N/A"}
+                    </Text>
+                    <Text style={styles.profileText}>
+                      <Text style={styles.bold}>ID:</Text> {profile.resourceName || profile.id || "N/A"}
+                    </Text>
+                  </View>
+                );
+              } catch (e) {
+                return <Text style={styles.profileText}>Profile data (raw): {currentProfile}</Text>;
+              }
+            })()}
+          </View>
+        )}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>AsyncStorage values</Text>
+          {Object.entries(allAsyncStorageValues).map(([k, v]) => renderKeyValue(k, v))}
+        </View>
+
+        <View style={styles.buttonsGrid}>
+          <TouchableOpacity style={styles.actionButton} onPress={fetchProfile}>
+            <Text style={styles.actionButtonText}>Google Profile</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={fetchCalendar}>
+            <Text style={styles.actionButtonText}>Google Calendar</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={fetchDriveFiles}>
+            <Text style={styles.actionButtonText}>Google Drive Files</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={fetchDrivePhotos}>
+            <Text style={styles.actionButtonText}>Google Drive Photos</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={fetchGooglePhotos}>
+            <Text style={styles.actionButtonText}>Google Photos</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={logout}>
+            <Text style={styles.actionButtonText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ marginTop: 12 }}>
+          <Text>Last action: {lastAction}</Text>
+        </View>
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+
+  return screen === "app" || authenticated ? <AppScreen /> : <LoginScreen />;
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
+  container: { flex: 1, backgroundColor: "#f2f2f2" },
+  scroll: { padding: 16 },
+  title: { fontSize: 24, fontWeight: "700", marginBottom: 12 },
+  googleButton: {
+    backgroundColor: "#4285F4",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    marginBottom: 12,
   },
+  googleButtonText: { color: "white", fontWeight: "700" },
+  section: {
+    backgroundColor: "white",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  sectionTitle: { fontWeight: "700", marginBottom: 6 },
+  kvRow: { flexDirection: "row", marginBottom: 6 },
+  kvKey: { width: 160, fontWeight: "600" },
+  kvValue: { flex: 1 },
+  hint: { color: "#444", fontSize: 12 },
+  bold: { fontWeight: "bold" },
+  profileText: { fontSize: 14, marginBottom: 4, color: "#333" },
+  buttonsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  actionButton: {
+    width: "48%",
+    backgroundColor: "#fff",
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: "center",
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  actionButtonText: { fontWeight: "600" },
 });
