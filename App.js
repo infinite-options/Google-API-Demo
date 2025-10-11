@@ -46,6 +46,11 @@ export default function App() {
   const [drivePhotos, setDrivePhotos] = useState([]);
   const [photoDataUrls, setPhotoDataUrls] = useState({});
 
+  // Google Photos Picker state
+  const [googlePhotos, setGooglePhotos] = useState([]);
+  const [photoPickerLoading, setPhotoPickerLoading] = useState(false);
+  const [imageErrors, setImageErrors] = useState({});
+
   // Local (non-AsyncStorage) holders for authUrl and sessionId returned by the backend
   const [authUrl, setAuthUrl] = useState(null);
   const [googleSessionId, setGoogleSessionId] = useState(null);
@@ -399,6 +404,8 @@ export default function App() {
       setCalendarEvents(null);
       setDrivePhotos([]);
       setPhotoDataUrls({});
+      setGooglePhotos([]);
+      setImageErrors({});
 
       setAuthenticated(false);
       setScreen("login");
@@ -474,6 +481,203 @@ export default function App() {
       setLastAction("❌ Failed to fetch drive photos");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Helper function to fetch authenticated image data
+  const fetchAuthenticatedImage = async (imageUrl) => {
+    try {
+      const response = await fetch(imageUrl, {
+        headers: {
+          Authorization: `Bearer ${currentAccessToken}`,
+        },
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      } else {
+        console.error(`Failed to fetch image: ${response.status}`);
+        return null;
+      }
+    } catch (error) {
+      console.error("Error fetching authenticated image:", error);
+      return null;
+    }
+  };
+
+  const startGooglePicker = async () => {
+    if (!currentAccessToken) {
+      Alert.alert("Not Authenticated", "Please sign in first before using the Photo Picker.");
+      return;
+    }
+
+    try {
+      setPhotoPickerLoading(true);
+      console.log("📸 Starting Google Photo Picker...");
+
+      // First validate the session is still valid
+      try {
+        await apiCall("/api/user/profile");
+        console.log("✅ Session is still valid");
+      } catch (error) {
+        console.log("❌ Session expired, need to re-authenticate");
+        Alert.alert("Session Expired", "Your session has expired. Please sign in again to use the Photo Picker.", [{ text: "OK", onPress: () => logout() }]);
+        return;
+      }
+
+      // Create Photo Picker session
+      const session = await apiCall("/api/photos/picker/session", {
+        method: "POST",
+      });
+
+      if (!session.pickerUri) {
+        throw new Error("Failed to get picker URI");
+      }
+
+      console.log("Opening Photo Picker UI:", session.pickerUri);
+
+      // Platform-specific Photo Picker handling
+      if (Platform.OS === "web") {
+        // Web: Open in new window/tab with polling
+        console.log("🌐 Opening Photo Picker in new window (Web)");
+        const pickerWindow = window.open(session.pickerUri, "_blank", "width=800,height=600");
+
+        // Poll for when the window is closed or check for updates
+        const checkPickerStatus = setInterval(async () => {
+          if (pickerWindow.closed) {
+            clearInterval(checkPickerStatus);
+
+            // Wait a bit for the session to be updated on Google's side
+            setTimeout(async () => {
+              try {
+                console.log("Fetching picker results...");
+                const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
+
+                // Transform the data to match React web app format
+                const photos = [];
+
+                for (const item of data.mediaItems || []) {
+                  console.log("Item:", item);
+                  const baseUrl = item.mediaFile?.baseUrl;
+
+                  if (baseUrl) {
+                    // Fetch authenticated thumbnail
+                    const thumbnailUrl = baseUrl + "=w200-h200";
+                    const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+                    const photo = {
+                      id: item.id,
+                      name: item.mediaFile?.filename || `Photo ${item.id}`,
+                      url: baseUrl,
+                      thumbnails: [
+                        {
+                          url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                        },
+                      ],
+                      mimeType: item.mediaFile?.mimeType,
+                      creationTime: item.createTime,
+                      width: item.mediaFile?.mediaFileMetadata?.width,
+                      height: item.mediaFile?.mediaFileMetadata?.height,
+                    };
+                    photos.push(photo);
+                  }
+                }
+
+                if (photos.length > 0) {
+                  console.log("✅ Photo picker results received:", photos.length, "photos");
+                  setGooglePhotos(photos);
+                  Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
+                } else {
+                  console.log("❌ No selection found for session:", session.id);
+                  Alert.alert("No Photos", "No photos were selected in the picker");
+                }
+              } catch (error) {
+                console.error("❌ Failed to fetch picker result:", error);
+                Alert.alert("Error", "Failed to fetch selected photos");
+              }
+            }, 3000); // Wait 3 seconds for session to update
+          }
+        }, 1000);
+
+        // Also try to fetch photos after a longer delay in case the window doesn't close properly
+        setTimeout(async () => {
+          clearInterval(checkPickerStatus);
+          try {
+            console.log("Fetching picker results (fallback)...");
+            const data = await apiCall(`/api/photos/picker/media?sessionId=${session.id}`);
+
+            // Transform the data to match React web app format
+            const photos = [];
+
+            for (const item of data.mediaItems || []) {
+              const baseUrl = item.mediaFile?.baseUrl;
+
+              if (baseUrl) {
+                // Fetch authenticated thumbnail
+                const thumbnailUrl = baseUrl + "=w200-h200";
+                const authenticatedThumbnailUrl = await fetchAuthenticatedImage(thumbnailUrl);
+
+                const photo = {
+                  id: item.id,
+                  name: item.mediaFile?.filename || `Photo ${item.id}`,
+                  url: baseUrl,
+                  thumbnails: [
+                    {
+                      url: authenticatedThumbnailUrl || thumbnailUrl, // Use authenticated URL if available, fallback to original
+                    },
+                  ],
+                  mimeType: item.mediaFile?.mimeType,
+                  creationTime: item.createTime,
+                  width: item.mediaFile?.mediaFileMetadata?.width,
+                  height: item.mediaFile?.mediaFileMetadata?.height,
+                };
+                photos.push(photo);
+              }
+            }
+
+            if (photos.length > 0) {
+              console.log("✅ Photo picker results received:", photos.length, "photos");
+              setGooglePhotos(photos);
+              Alert.alert("Success", `Selected ${photos.length} photos from Google Photos!`);
+            } else {
+              console.log("❌ No selection found for session:", session.id);
+              Alert.alert("No Photos", "No photos were selected in the picker");
+            }
+          } catch (error) {
+            console.error("❌ Failed to fetch picker result:", error);
+            Alert.alert("Error", "Failed to fetch selected photos");
+          }
+        }, 30000); // 30 second timeout
+      } else {
+        // Mobile (Android/iOS): Open in external browser
+        console.log("📱 Opening Photo Picker in external browser (Mobile)");
+        console.log("📱 Photo Picker URI:", session.pickerUri);
+
+        try {
+          console.log("📱 Checking if URL can be opened...");
+          const supported = await Linking.canOpenURL(session.pickerUri);
+          console.log("📱 URL supported:", supported);
+
+          if (supported) {
+            console.log("📱 Opening URL...");
+            await Linking.openURL(session.pickerUri);
+            console.log("📱 URL opened successfully");
+            Alert.alert("Photo Picker Opened", `Please select your photos in the browser, then return to this app and click 'Refresh Photos' to see your selections.\n\nSession ID: ${session.id}`);
+          } else {
+            console.log("📱 URL not supported");
+            Alert.alert("Error", "Cannot open Photo Picker URL");
+          }
+        } catch (error) {
+          console.error("📱 Error opening Photo Picker:", error);
+          Alert.alert("Error", `Failed to open Photo Picker: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      console.error("Error starting Photo Picker:", error);
+      Alert.alert("Error", "Failed to start Photo Picker. Please Sign In Again.");
+    } finally {
+      setPhotoPickerLoading(false);
     }
   };
 
@@ -674,8 +878,8 @@ export default function App() {
               <Text style={styles.actionButtonText}>Google Drive Photos</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionButton} onPress={fetchGooglePhotos}>
-              <Text style={styles.actionButtonText}>Google Photos</Text>
+            <TouchableOpacity style={[styles.actionButton, photoPickerLoading && styles.disabledButton]} onPress={startGooglePicker} disabled={photoPickerLoading}>
+              <Text style={styles.actionButtonText}>{photoPickerLoading ? "Starting Picker..." : "Google Photos"}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionButton} onPress={logout}>
@@ -781,6 +985,56 @@ export default function App() {
                     </View>
                   );
                 })}
+              </View>
+            </View>
+          )}
+
+          {/* Google Photos Results */}
+          {googlePhotos && googlePhotos.length > 0 && (
+            <View style={styles.resultsCard}>
+              <Text style={styles.resultsTitle}>Google Photos Library ({googlePhotos.length})</Text>
+              <View style={styles.photosGrid}>
+                {googlePhotos.map((photo, index) => (
+                  <View key={index} style={styles.photoItem}>
+                    {photo.thumbnails?.[0]?.url && !imageErrors[photo.id] ? (
+                      <Image
+                        source={{ uri: photo.thumbnails[0].url }}
+                        style={styles.photoThumbnail}
+                        resizeMode='cover'
+                        onLoad={() => console.log("Thumbnail loaded successfully:", photo.name)}
+                        onError={(error) => {
+                          console.log("Thumbnail load error, trying full image:", photo.name, error.nativeEvent);
+                          setImageErrors((prev) => ({ ...prev, [photo.id]: "thumbnail_failed" }));
+                        }}
+                      />
+                    ) : photo.url && imageErrors[photo.id] === "thumbnail_failed" ? (
+                      <Image
+                        source={{ uri: photo.url }}
+                        style={styles.photoThumbnail}
+                        resizeMode='cover'
+                        onLoad={() => console.log("Full image loaded successfully:", photo.name)}
+                        onError={(error) => {
+                          console.log("Full image also failed:", photo.name, error.nativeEvent);
+                          setImageErrors((prev) => ({ ...prev, [photo.id]: "both_failed" }));
+                        }}
+                      />
+                    ) : (
+                      <View style={styles.photoPlaceholder}>
+                        <Text style={styles.photoIcon}>📷</Text>
+                        <Text style={styles.loadingText}>{imageErrors[photo.id] === "both_failed" ? "Image unavailable" : "Loading..."}</Text>
+                      </View>
+                    )}
+                    <View style={styles.photoInfo}>
+                      <Text style={styles.photoName}>{photo.name}</Text>
+                      {photo.width && photo.height && (
+                        <Text style={styles.photoDimensions}>
+                          📐 {photo.width}x{photo.height}
+                        </Text>
+                      )}
+                      {photo.creationTime && <Text style={styles.photoDate}>📅 {formatDate(photo.creationTime)}</Text>}
+                    </View>
+                  </View>
+                ))}
               </View>
             </View>
           )}
@@ -1003,5 +1257,15 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: "#999",
     textAlign: "center",
+  },
+  // Google Photos specific styles
+  photoDimensions: {
+    fontSize: 10,
+    color: "#999",
+    textAlign: "center",
+    marginTop: 2,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });
