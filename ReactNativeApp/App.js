@@ -261,17 +261,21 @@ export default function App() {
 
       if (sessionId && accessToken) {
         console.log("💾 ✅ Found complete auth state, restoring...");
+        console.log("💾 Restoring sessionId:", sessionId);
+        console.log("💾 Restoring accessToken:", accessToken ? "Present" : "None");
+        console.log("💾 Restoring profile:", profileStr ? "Present" : "None");
 
         // Set the state first
         setAuthenticated(true);
         setSessionId(sessionId);
         setAccessToken(accessToken);
-        // setDebugAccessToken(accessToken); // Keep debugAccessToken in sync
+        setDebugAccessToken(accessToken); // Keep debugAccessToken in sync
         if (profileStr) {
           setProfile(JSON.parse(profileStr));
         }
 
         console.log("💾 ✅ Auth state restored successfully!");
+        console.log("💾 State variables should now be set");
         return true;
       } else {
         console.log("💾 ❌ Incomplete auth state - missing sessionId or accessToken");
@@ -291,14 +295,15 @@ export default function App() {
     await printAuthState();
     console.log("----------------------------------------------------");
 
-    // Try to restore complete authentication state (same pattern as Session ID)
+    // Try to restore complete authentication state
     const authRestored = await restoreAuthState();
     if (authRestored) {
       console.log("🔄 ✅ Auth state restored successfully");
+      console.log("🔄 ===== RESUMEOAUTH COMPLETED =====");
       return;
     }
 
-    // If no complete auth state, check for pending session
+    // If no complete auth state, check for pending session (for deep link scenarios)
     const pendingSessionId = await getPendingSession();
     if (pendingSessionId) {
       console.log("🔄 Found pending session, attempting to complete authentication...");
@@ -309,18 +314,8 @@ export default function App() {
         console.log("🔄 ✅ Pending session completed successfully");
       } catch (error) {
         console.error("🔄 ❌ Failed to complete pending session:", error);
-        console.log("🔄 ⚠️  Keeping session ID for Photo Picker retry...");
-
-        // DON'T clear the session ID - keep it for Photo Picker retry
-        // Only clear tokens and profile, but keep sessionId
-        setAccessToken(null);
-        setDebugAccessToken(null);
-        setProfile(null);
-
-        // Clear tokens from AsyncStorage but keep sessionId
-        await AsyncStorage.removeItem("authAccessToken");
-        await AsyncStorage.removeItem("authProfile");
-        console.log("🔄 ✅ Cleared invalid tokens but kept session ID for retry");
+        console.log("🔄 ⚠️  Session may have expired, clearing pending session");
+        await clearPendingSession();
       }
     } else {
       console.log("🔄 No pending session found");
@@ -334,7 +329,7 @@ export default function App() {
     console.log("🔗 ===== DEEP LINK HANDLER CALLED =====");
     console.log("🔗 Deep link URL received:", url);
     console.log("🔗 Deep link timestamp:", new Date().toLocaleString());
-    console.log("🔗 Current authentication state:", sessionId && (accessToken || debugAccessToken) ? "AUTHENTICATED" : "NOT AUTHENTICATED");
+    console.log("🔗 Current authentication state:", authenticated ? "AUTHENTICATED" : "NOT AUTHENTICATED");
     console.log("🔗 Current sessionId:", sessionId);
     console.log("🔗 Current accessToken:", accessToken ? "Present" : "None");
 
@@ -477,7 +472,7 @@ export default function App() {
 
         // Check if we have both Session ID and Stored Access Token - if so, authenticate
         if (sessionId && storedAccessToken) {
-          console.log("🔍 Both Session ID and Stored Access Token present - setting authenticated to true");
+          console.log("🔍 Both Session ID and Stored Access Token present - authentication will be handled by restoreAuthState");
         }
 
         // Resume OAuth session after debug info is loaded
@@ -556,6 +551,7 @@ export default function App() {
 
   // Fetch tokens and profile from backend - SIMPLIFIED
   const fetchTokensAndProfile = async (sessionId) => {
+    console.log("--Fetching tokens and profile--------------------------------------");
     try {
       console.log("🔑 Fetching tokens and profile for sessionId:", sessionId);
 
@@ -593,6 +589,7 @@ export default function App() {
       console.error("🔑 ❌ Failed to fetch tokens and profile:", error);
       Alert.alert("Error", "Failed to complete authentication");
     }
+    console.log("----------------------------------------------------");
   };
 
   // Fetch picker results from backend
@@ -601,16 +598,18 @@ export default function App() {
       console.log("📸 Fetching picker result for session:", session);
       console.log("📸 Using accessToken:", accessToken ? "Present" : "None");
       console.log("📸 Using explicitAccessToken:", explicitAccessToken ? "Present" : "None");
+      console.log("📸 accessToken value:", accessToken);
+      console.log("📸 debugAccessToken value:", debugAccessToken);
       setPhotoPickerLoading(true);
 
       const tokenToUse = explicitAccessToken || accessToken;
       console.log("📸 Final token being used:", tokenToUse ? "Present" : "None");
+      console.log("📸 Final token value:", tokenToUse);
 
       const response = await apiCall(`/api/photos/picker/media?sessionId=${encodeURIComponent(session)}`, {
         headers: {
           // Use the explicitAccessToken if provided, otherwise fall back to state
-          ...(explicitAccessToken && { Authorization: `Bearer ${explicitAccessToken}` }),
-          ...(!explicitAccessToken && accessToken && { Authorization: `Bearer ${accessToken}` }),
+          ...(tokenToUse && { Authorization: `Bearer ${tokenToUse}` }),
         },
       });
 
@@ -666,7 +665,8 @@ export default function App() {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+        // Only add accessToken if no Authorization header is explicitly provided
+        ...(accessToken && !options.headers?.Authorization && { Authorization: `Bearer ${accessToken}` }),
         ...options.headers,
       },
     };
@@ -870,7 +870,7 @@ export default function App() {
   };
 
   const startGooglePicker = async () => {
-    if (!accessToken) {
+    if (!authenticated) {
       Alert.alert("Not Authenticated", "Please sign in first before using the Photo Picker.");
       return;
     }
@@ -1141,7 +1141,7 @@ export default function App() {
               <Text style={styles.debugText}>Stored Access Token: {debugAccessToken ? "Present" : "None"}</Text>
               <Text style={styles.debugText}>Stored Access Token (last 10): {debugAccessToken ? "..." + debugAccessToken.substring(debugAccessToken.length - 10) : "None"}</Text>
               <Text style={styles.debugText}>Profile: {profile ? "Loaded" : "None"}</Text>
-              <Text style={styles.debugText}>Authenticated: {sessionId && (accessToken || debugAccessToken) ? "True" : "False"}</Text>
+              <Text style={styles.debugText}>Authenticated: {authenticated ? "True" : "False"}</Text>
             </View>
 
             {/* Show Async Storage Button */}
@@ -1218,11 +1218,12 @@ export default function App() {
               <TouchableOpacity
                 style={[styles.photoButton, { backgroundColor: "#ff6b6b", marginTop: 8 }, photoPickerLoading && styles.disabledButton]}
                 onPress={() => {
-                  if (sessionId) {
+                  if (sessionId && authenticated) {
                     console.log("🔄 Manual refresh triggered for sessionId:", sessionId);
-                    fetchPickerResult(sessionId);
+                    console.log("🔄 Using accessToken:", accessToken ? "Present" : "None");
+                    fetchPickerResult(sessionId, accessToken);
                   } else {
-                    Alert.alert("No Session", "Please complete authentication first");
+                    Alert.alert("Not Authenticated", "Please complete authentication first");
                   }
                 }}
                 disabled={photoPickerLoading}
