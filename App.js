@@ -1,8 +1,9 @@
 // App.js — single-file React Native app
 import React, { useEffect, useState } from "react";
-import { View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert, Image } from "react-native";
+import { View, Text, Button, TouchableOpacity, ScrollView, StyleSheet, Linking, Platform, Alert, Image, AppState } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as WebBrowser from "expo-web-browser";
 
 /**
  * Environment variables from your .env file (exported by your bundler)
@@ -29,8 +30,18 @@ const CURRENT_ACCESS_TOKEN = "currentAccessToken";
 const CURRENT_PROFILE = "currentProfile";
 
 export default function App() {
+  // Complete any pending auth sessions to prevent app restart
+  WebBrowser.maybeCompleteAuthSession();
+
   // Get safe area insets
   const insets = useSafeAreaInsets();
+
+  // Debug: Track app lifecycle
+  const [appStartTime] = useState(() => {
+    const startTime = new Date().toISOString();
+    console.log("🚀 APP STARTED at:", startTime);
+    return startTime;
+  });
 
   // 4 variables (3 AsyncStorage-backed values + 1 boolean)
   const [currentSession, setCurrentSession] = useState(null);
@@ -66,29 +77,54 @@ export default function App() {
   const buildNumber = "1.0.0";
   const buildTimestamp = new Date().toLocaleString();
 
+  // Function to reload AsyncStorage values
+  const reloadAsyncStorage = async () => {
+    try {
+      console.log("🔄 Reloading AsyncStorage values...");
+      const [cs, cat, cp] = await Promise.all([AsyncStorage.getItem(CURRENT_SESSION), AsyncStorage.getItem(CURRENT_ACCESS_TOKEN), AsyncStorage.getItem(CURRENT_PROFILE)]);
+
+      console.log("📦 Reloaded AsyncStorage values:", {
+        currentSession: cs,
+        currentAccessToken: cat ? `${cat.substring(0, 20)}...` : null,
+        currentProfile: cp ? `${cp.substring(0, 50)}...` : null,
+      });
+
+      setCurrentSession(cs);
+      setCurrentAccessToken(cat);
+      setCurrentProfile(cp);
+
+      // If access token exists, mark authenticated
+      const isAuth = !!cat && !!cp;
+      setAuthenticated(isAuth);
+
+      console.log("🔑 Reloaded authentication state:", {
+        session: cs,
+        hasToken: !!cat,
+        hasProfile: !!cp,
+        isAuth,
+      });
+
+      return { currentSession: cs, currentAccessToken: cat, currentProfile: cp };
+    } catch (err) {
+      console.error("❌ Failed to reload AsyncStorage:", err);
+      return { currentSession: null, currentAccessToken: null, currentProfile: null };
+    }
+  };
+
   useEffect(() => {
     // load AsyncStorage values once on mount
     (async () => {
       try {
-        console.log("🔄 App starting up - loading AsyncStorage values...");
-        const [cs, cat, cp] = await Promise.all([AsyncStorage.getItem(CURRENT_SESSION), AsyncStorage.getItem(CURRENT_ACCESS_TOKEN), AsyncStorage.getItem(CURRENT_PROFILE)]);
+        console.log("🔄 useEffect RUNNING - App starting up - loading AsyncStorage values...");
+        console.log("🔄 App start time was:", appStartTime);
+        console.log("🔄 Current time is:", new Date().toISOString());
+        const { currentSession: cs, currentAccessToken: cat, currentProfile: cp } = await reloadAsyncStorage();
 
-        console.log("📦 Raw AsyncStorage values:", {
-          currentSession: cs,
-          currentAccessToken: cat ? `${cat.substring(0, 20)}...` : null,
-          currentProfile: cp ? `${cp.substring(0, 50)}...` : null,
-        });
-
-        setCurrentSession(cs);
-        setCurrentAccessToken(cat);
-        setCurrentProfile(cp);
-
-        // If access token exists, mark authenticated (even if session is null - we might get a new session from deep link)
+        // Set screen based on authentication
         const isAuth = !!cat && !!cp;
-        setAuthenticated(isAuth);
         setScreen(isAuth ? "app" : "login");
 
-        console.log("🔑 Authentication state:", {
+        console.log("🔑 Final authentication state:", {
           session: cs,
           hasToken: !!cat,
           hasProfile: !!cp,
@@ -104,6 +140,8 @@ export default function App() {
     const handleUrl = async (event) => {
       const { url } = event;
       console.log("🔗 Deep link URL received:", url);
+      console.log("🔗 App start time was:", appStartTime);
+      console.log("🔗 Current time is:", new Date().toISOString());
 
       try {
         const parsed = new URL(url);
@@ -228,11 +266,27 @@ export default function App() {
       }
     }
 
-    // Cleanup deep linking listener
+    // Set up app state listener to reload AsyncStorage when app comes back into focus
+    const handleAppStateChange = (nextAppState) => {
+      console.log("📱 App state changed to:", nextAppState);
+      if (nextAppState === "active") {
+        console.log("🔄 App came back into focus - reloading AsyncStorage...");
+        console.log("🔄 App start time was:", appStartTime);
+        console.log("🔄 Current time is:", new Date().toISOString());
+        reloadAsyncStorage();
+      }
+    };
+
+    const appStateListener = AppState.addEventListener("change", handleAppStateChange);
+
+    // Cleanup listeners
     return () => {
-      console.log("🔗 Cleaning up deep link listener...");
+      console.log("🔗 Cleaning up listeners...");
       if (linkingListener) {
         linkingListener.remove();
+      }
+      if (appStateListener) {
+        appStateListener.remove();
       }
     };
   }, []);
@@ -247,11 +301,23 @@ export default function App() {
   // API helper function
   const apiCall = async (endpoint, options = {}) => {
     const url = `${baseURL}${endpoint}`;
+
+    // Get access token from local state or AsyncStorage
+    let accessToken = currentAccessToken;
+    if (!accessToken) {
+      try {
+        accessToken = await AsyncStorage.getItem(CURRENT_ACCESS_TOKEN);
+        console.log("🔑 Retrieved access token from AsyncStorage for API call");
+      } catch (error) {
+        console.error("❌ Failed to get access token from AsyncStorage:", error);
+      }
+    }
+
     const config = {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...(currentAccessToken && { Authorization: `Bearer ${currentAccessToken}` }),
+        ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
         ...options.headers,
       },
     };
@@ -755,6 +821,12 @@ export default function App() {
       console.log("🔑 Current session:", currentSession);
       console.log("🔑 Google session ID:", googleSessionId);
 
+      // Check AsyncStorage for access token if not in local state
+      if (!currentAccessToken) {
+        const storedToken = await AsyncStorage.getItem(CURRENT_ACCESS_TOKEN);
+        console.log("🔑 Stored access token in AsyncStorage:", storedToken ? `${storedToken.substring(0, 30)}...` : "None");
+      }
+
       const data = await apiCall(`/api/photos/picker/media?sessionId=${sessionId}`);
 
       // Transform the data to match React web app format
@@ -895,6 +967,7 @@ export default function App() {
         <View style={styles.buildInfo}>
           <Text style={styles.buildText}>Build: {buildNumber}</Text>
           <Text style={styles.buildText}>Started: {buildTimestamp}</Text>
+          <Text style={styles.buildText}>App Start: {appStartTime}</Text>
         </View>
 
         <Text style={styles.title}>Login Screen</Text>
@@ -926,6 +999,10 @@ export default function App() {
 
         <View style={{ marginVertical: 8 }}>
           <Button title='🧪 Simulate Login (DEV ONLY)' onPress={simulateSuccessUsingBackend} />
+        </View>
+
+        <View style={{ marginVertical: 8 }}>
+          <Button title='🔄 Reload AsyncStorage' onPress={reloadAsyncStorage} />
         </View>
 
         <View style={{ marginVertical: 8 }}>
@@ -962,6 +1039,7 @@ export default function App() {
           <View style={styles.buildInfo}>
             <Text style={styles.buildText}>Build: {buildNumber}</Text>
             <Text style={styles.buildText}>Started: {buildTimestamp}</Text>
+            <Text style={styles.buildText}>App Start: {appStartTime}</Text>
           </View>
 
           <Text style={styles.title}>App Screen</Text>
